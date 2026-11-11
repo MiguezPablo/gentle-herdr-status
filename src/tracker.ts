@@ -5,6 +5,10 @@
  * run alongside it in parentheses when two or more run, e.g. `↳ explore` or
  * `↳ worker (+2)`. Nothing running renders no label at all.
  *
+ * The prefix is the only thing the style changes: with the emoji style it is one emoji per
+ * agent instead of `↳ ` (`🧭 explore (+1)`, `🔨 worker`, `🧪 verify`, `🤖` for any other),
+ * because an arrow says "child" but not which child. Name, cap and counter are shared.
+ *
  * Sources (gentle-pi):
  * - tool_call of `subagent_run` / `subagent_continue` in task mode (the default):
  *   the call blocks until the child finishes, so it runs from the call to its result.
@@ -17,6 +21,25 @@ export const FINISHED_STATUSES: ReadonlySet<string> = new Set(["completed", "fai
 
 /** Marks the label as a subagent, never part of the sanitized or capped name. */
 export const LABEL_PREFIX = "↳ ";
+
+/**
+ * Cómo se marca el subagente: la flecha `↳ ` (default) o un emoji por agente. Es un
+ * estilo del prefijo, nada más: el nombre saneado, el tope y el contador no cambian.
+ */
+export type SubagentStyle = "arrow" | "emoji";
+
+/**
+ * Un emoji por agente, de un solo codepoint y sin selector de variación U+FE0F, así que el
+ * terminal dibuja un glifo. Se busca por el nombre ya acortado (sin `gentle-ai-`).
+ */
+export const SUBAGENT_EMOJIS: Readonly<Record<string, string>> = {
+	explore: "🧭",
+	worker: "🔨",
+	verify: "🧪",
+};
+
+/** Emoji de cualquier otro agente: no se inventa un rol que no se conoce. */
+export const OTHER_SUBAGENT_EMOJI = "🤖";
 
 const RUN_TOOL = "subagent_run";
 const CONTINUE_TOOL = "subagent_continue";
@@ -91,12 +114,13 @@ export class SubagentTracker {
 		if (FINISHED_STATUSES.has(status)) this.running.delete(`task:${taskId}`);
 	}
 
-	label(): string | null {
+	label(style: SubagentStyle = "arrow"): string | null {
 		const first = this.running.values().next();
 		if (first.done) return null;
 		const others = this.running.size - 1;
 		const name = first.value.agent;
-		return others >= 1 ? `${LABEL_PREFIX}${name} (+${others})` : `${LABEL_PREFIX}${name}`;
+		const prefix = style === "emoji" ? `${SUBAGENT_EMOJIS[name] ?? OTHER_SUBAGENT_EMOJI} ` : LABEL_PREFIX;
+		return others >= 1 ? `${prefix}${name} (+${others})` : `${prefix}${name}`;
 	}
 
 	reset(): void {

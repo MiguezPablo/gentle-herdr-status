@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { LABEL_PREFIX, SubagentTracker } from "../src/tracker.ts";
+import { LABEL_PREFIX, OTHER_SUBAGENT_EMOJI, SUBAGENT_EMOJIS, SubagentTracker } from "../src/tracker.ts";
 
 function details(taskId: string, agent: string, status: string) {
 	return { gentleAgents: { taskId, agent, status, mode: "background" } };
@@ -190,4 +190,48 @@ test("reset forgets everything", () => {
 	tracker.toolCall("c2", "subagent_run", { agent: "worker", task: "x" });
 	tracker.reset();
 	assert.equal(tracker.label(), null);
+});
+
+/** Un emoji de un solo codepoint evita que el terminal dibuje dos glifos. */
+function assertSingleCodepoint(emoji: string, label: string): void {
+	assert.equal(Array.from(emoji).length, 1, `${label}: one codepoint`);
+	assert.ok(!emoji.includes("\uFE0F"), `${label}: no variation selector`);
+}
+
+test("S14: the subagent emoji map is one codepoint per agent, without U+FE0F", () => {
+	assert.deepEqual({ ...SUBAGENT_EMOJIS }, { explore: "🧭", worker: "🔨", verify: "🧪" });
+	for (const [agent, emoji] of Object.entries(SUBAGENT_EMOJIS)) assertSingleCodepoint(emoji, agent);
+	assertSingleCodepoint(OTHER_SUBAGENT_EMOJI, "fallback");
+	assert.equal(OTHER_SUBAGENT_EMOJI, "🤖");
+});
+
+test("S14: the emoji style replaces the arrow with the agent's emoji, counter and cap unchanged", () => {
+	const tracker = new SubagentTracker();
+	tracker.toolResult("c1", "subagent_run", details("t1", "explore", "running"));
+	assert.equal(tracker.label("emoji"), "🧭 explore");
+	tracker.toolCall("c2", "subagent_run", { agent: "worker", task: "x" });
+	assert.equal(tracker.label("emoji"), "🧭 explore (+1)", "the counter goes in parentheses, as with the arrow");
+	tracker.status("t1", "completed");
+	assert.equal(tracker.label("emoji"), "🔨 worker");
+	tracker.reset();
+	tracker.toolCall("c3", "subagent_run", { agent: "gentle-ai-verify", task: "x" });
+	assert.equal(tracker.label("emoji"), "🧪 verify", "the map uses the name after dropping the prefix");
+	tracker.reset();
+	tracker.toolCall("c4", "subagent_run", { agent: "reviewer", task: "x" });
+	assert.equal(tracker.label("emoji"), "🤖 reviewer", "any other agent gets the neutral robot");
+	tracker.reset();
+	tracker.toolCall("c5", "subagent_run", { agent: "explore-x", task: "x" });
+	assert.equal(tracker.label("emoji"), "🤖 explore-x", "only the exact agent name has its own emoji");
+});
+
+test("S14/PRESERVE: the arrow style is the default and keeps every label byte for byte", () => {
+	const tracker = new SubagentTracker();
+	tracker.toolResult("c1", "subagent_run", details("t1", "explore", "running"));
+	tracker.toolCall("c2", "subagent_run", { agent: "worker", task: "x" });
+	assert.equal(tracker.label(), "↳ explore (+1)");
+	assert.equal(tracker.label("arrow"), "↳ explore (+1)", "the explicit arrow style equals the default");
+	tracker.reset();
+	tracker.toolCall("c3", "subagent_run", { agent: `evil\nname\u001b[31m${"x".repeat(80)}`, task: "x" });
+	assert.equal(tracker.label("arrow"), `↳ evil name${"x".repeat(23)}`, "sanitized and capped as before");
+	assert.equal(tracker.label("emoji"), `🤖 evil name${"x".repeat(23)}`, "the emoji keeps the same sanitized name");
 });

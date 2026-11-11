@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { test } from "node:test";
+import { after, test } from "node:test";
 
 import { createExtension } from "../extensions/pi-herdr-status.ts";
+import { CONFIG_ENV, DEFAULT_CONFIG, OPTION_IDS, saveConfig } from "../src/config.ts";
 import { DEBUG_ENV } from "../src/debug.ts";
 import { JOBS_SIDEBAR_EVENT } from "../src/jobs.ts";
 import {
@@ -41,6 +42,16 @@ async function withRegistry<T>(value: unknown, run: () => T | Promise<T>): Promi
 const HERDR_ENV = { HERDR_ENV: "1", HERDR_PANE_ID: "w1:p1", HERDR_SOCKET_PATH: "/tmp/herdr.sock" };
 const TUI_CTX = { mode: "tui", sessionManager: { getSessionId: () => "s1" } };
 
+/** Raíz de los archivos de config de los tests: nunca el archivo real del usuario. */
+const TMP_ROOT = mkdtempSync(join(tmpdir(), "pi-herdr-status-test-"));
+after(() => rmSync(TMP_ROOT, { recursive: true, force: true }));
+let configSeq = 0;
+
+/** Una ruta de config propia por test, para que ninguno vea el archivo de otro. */
+function freshConfigPath(): string {
+	return join(TMP_ROOT, `config-${++configSeq}`, "config.json");
+}
+
 /** Todo reporte lleva los cinco tokens; `$name` vale `gentle` mientras la sesión vive. */
 const tokensOf = (overrides: Record<string, string | null> = {}) => ({
 	[NAME_TOKEN]: PANEL_NAME,
@@ -51,12 +62,19 @@ const tokensOf = (overrides: Record<string, string | null> = {}) => ({
 	...overrides,
 });
 
+type CommandHandler = (args: string, ctx: unknown) => Promise<void>;
+type CommandOptions = { description?: string; handler: CommandHandler };
+
 function load(
 	env: Record<string, string | undefined> = HERDR_ENV,
-	deps: { readPhase?: PhaseReader; runGit?: GitRun } = {},
+	deps: { readPhase?: PhaseReader; runGit?: GitRun; configPath?: string } = {},
 ) {
+	const configPath = deps.configPath ?? freshConfigPath();
+	// Sin ruta explícita el test escribiría en el archivo real del usuario.
+	const effectiveEnv: Record<string, string | undefined> = { [CONFIG_ENV]: configPath, ...env };
 	const handlers = new Map<string, Handler>();
 	const bus = new Map<string, (data: unknown) => void>();
+	const commands = new Map<string, CommandOptions>();
 	const sent: HerdrRequest[] = [];
 	const timers = new Map<number, { fn: () => void; ms: number }>();
 	let nextTimer = 1;
@@ -65,9 +83,10 @@ function load(
 		events: {
 			on: (name: string, handler: (data: unknown) => void) => { bus.set(name, handler); return () => bus.delete(name); },
 		},
+		registerCommand: (name: string, options: CommandOptions) => { commands.set(name, options); },
 	};
 	createExtension({
-		env,
+		env: effectiveEnv,
 		send: async (request) => { sent.push(request); return true; },
 		readPhase: deps.readPhase,
 		runGit: deps.runGit,
@@ -91,9 +110,12 @@ function load(
 	return {
 		handlers,
 		bus,
+		commands,
+		configPath,
 		sent,
 		fire,
 		emit,
+		flush,
 		tokens: () => sent.map((request) => request.params.tokens[TOKEN] ?? null),
 		phases: () => sent.map((request) => request.params.tokens[PHASE_TOKEN] ?? null),
 		names: () => sent.map((request) => request.params.tokens[NAME_TOKEN] ?? null),
@@ -664,4 +686,265 @@ test("PRESERVE: with $changes on, $phase, $subagent, $jobs and $name keep their 
 		[PHASE_TOKEN]: "[implementing]",
 		[JOBS_TOKEN]: "⏵ CI for PR 1834",
 	}), "the other four tokens read exactly as before");
+});
+
+test("S13: a stored config drives every token without any environment variable", async () => {
+	const configPath = freshConfigPath();
+	saveConfig(configPath, {
+		...DEFAULT_CONFIG,
+		phaseStyle: "emoji",
+		subagentStyle: "emoji",
+		name: "side",
+	});
+	const { fire, last } = load(HERDR_ENV, { configPath, readPhase: () => "implementing" });
+	await fire("session_start", { reason: "startup" });
+	assert.equal(last()!.tokens[NAME_TOKEN], "side", "$name comes from the file");
+	await fire("agent_start", { type: "agent_start" });
+	assert.equal(last()!.tokens[PHASE_TOKEN], "🔨 implementing", "the stored phase style is the emoji one");
+	await fire("tool_call", { toolCallId: "c1", toolName: "subagent_run", input: { agent: "explore", task: "x" } });
+	assert.equal(last()!.tokens[TOKEN], "🧭 explore", "the stored subagent style is the emoji one");
+});
+
+test("S13: showSubagent=false keeps $subagent null and showJobs=false keeps $jobs null", async () => {
+	const configPath = freshConfigPath();
+	saveConfig(configPath, { ...DEFAULT_CONFIG, showSubagent: false, showJobs: false });
+	const { fire, emit, last } = load(HERDR_ENV, { configPath });
+	await fire("session_start", { reason: "startup" });
+	await fire("tool_call", { toolCallId: "c1", toolName: "subagent_run", input: { agent: "explore", task: "x" } });
+	await emit(JOBS_SIDEBAR_EVENT, jobsSnapshot("s1", [job("j1", "CI for PR 1834", 10)]));
+	assert.equal(last()!.tokens[TOKEN], null, "a switched-off token is never published");
+	assert.equal(last()!.tokens[JOBS_TOKEN], null);
+	assert.equal(last()!.tokens[NAME_TOKEN], PANEL_NAME, "the other tokens keep working");
+});
+
+test("S13: changes=true in the file turns the counter on without the variable", async () => {
+	const configPath = freshConfigPath();
+	saveConfig(configPath, { ...DEFAULT_CONFIG, changes: true });
+	const git = fakeChangesGit("4\t1\ta.ts\n");
+	const { fire, changes } = load(HERDR_ENV, { configPath, runGit: git.run });
+	await fire("session_start", { reason: "startup" });
+	assert.equal(changes().at(-1), "+4 -1");
+});
+
+test("S13: a defined PI_HERDR_STATUS_CHANGES=0 wins over changes=true in the file", async () => {
+	const configPath = freshConfigPath();
+	saveConfig(configPath, { ...DEFAULT_CONFIG, changes: true });
+	const git = fakeChangesGit("4\t1\ta.ts\n");
+	const { fire, changes } = load({ ...HERDR_ENV, PI_HERDR_STATUS_CHANGES: "0" }, { configPath, runGit: git.run });
+	await fire("session_start", { reason: "startup" });
+	assert.deepEqual(git.calls, [], "the variable turns git off, so it never runs");
+	assert.equal(changes().at(-1), null);
+});
+
+test("PRESERVE: with no config file and no variables every token reads exactly as before", async () => {
+	const { fire, emit, last } = load(HERDR_ENV, { readPhase: () => "implementing" });
+	await fire("session_start", { reason: "startup" });
+	await fire("agent_start", { type: "agent_start" });
+	await fire("tool_call", { toolCallId: "c1", toolName: "subagent_run", input: { agent: "explore", task: "x" } });
+	await fire("tool_result", {
+		toolCallId: "c2", toolName: "subagent_run",
+		details: { gentleAgents: { taskId: "t1", agent: "worker", status: "running" } },
+	});
+	await emit(JOBS_SIDEBAR_EVENT, jobsSnapshot("s1", [job("j1", "CI for PR 1834", 10)]));
+	assert.deepEqual(last()!.tokens, {
+		[NAME_TOKEN]: "gentle",
+		[TOKEN]: "↳ explore (+1)",
+		[PHASE_TOKEN]: "[implementing]",
+		[JOBS_TOKEN]: "⏵ CI for PR 1834",
+		[CHANGES_TOKEN]: null,
+	});
+});
+
+/** Lo mínimo que el panel usa de la API de Pi, para poder manejarlo desde el test. */
+type Panel = { render(width: number): string[]; handleInput(data: string): void; invalidate(): void };
+type Notification = { message: string; level?: string };
+
+const KEYS: Record<"up" | "down" | "confirm" | "cancel", string> = {
+	up: "\u001b[A",
+	down: "\u001b[B",
+	confirm: "\r",
+	cancel: "\u001b",
+};
+/** ctrl+s: la tecla que guarda desde cualquier fila. */
+const SAVE_KEY = "\u0013";
+
+/** Contexto de comando con un `ui.custom` que entrega el panel al test. */
+function commandUi(sessionId = "s1") {
+	const notifications: Notification[] = [];
+	let panel: Panel | undefined;
+	const ctx = {
+		mode: "tui",
+		hasUI: true,
+		sessionManager: { getSessionId: () => sessionId },
+		ui: {
+			notify: (message: string, level?: string) => { notifications.push({ message, level }); },
+			custom: (factory: (tui: unknown, theme: unknown, keybindings: unknown, done: (value: unknown) => void) => Panel) =>
+				new Promise((resolve) => {
+					panel = factory(
+						{ requestRender: () => {}, invalidate: () => {} },
+						{ fg: (_color: string, text: string) => text, bold: (text: string) => text },
+						{
+							matches: (data: string, id: string) => {
+								if (id === "tui.select.up") return data === KEYS.up;
+								if (id === "tui.select.down") return data === KEYS.down;
+								if (id === "tui.select.confirm") return data === KEYS.confirm;
+								if (id === "tui.select.cancel") return data === KEYS.cancel;
+								return false;
+							},
+						},
+						resolve,
+					);
+				}),
+		},
+	};
+	return {
+		ctx,
+		notifications,
+		panel: (): Panel => {
+			assert.ok(panel, "the command opened the panel");
+			return panel;
+		},
+		lines: (): string[] => panel?.render(80) ?? [],
+	};
+}
+
+/** Abre el panel del comando y devuelve lo necesario para manejarlo y esperarlo. */
+function openPanel(commands: Map<string, CommandOptions>) {
+	const command = commands.get("herdr-status");
+	assert.ok(command, "the extension registers the command");
+	const ui = commandUi();
+	return { ui, panel: ui.panel, done: command.handler("", ui.ctx) };
+}
+
+/** Baja el cursor hasta la fila de la opción pedida. */
+function moveTo(panel: Panel, id: (typeof OPTION_IDS)[number]): void {
+	const target = OPTION_IDS.indexOf(id);
+	for (let index = 0; index < target; index += 1) panel.handleInput(KEYS.down);
+}
+
+/** Baja el cursor hasta la fila de guardar (la última). */
+function moveToSave(panel: Panel): void {
+	for (let index = 0; index < OPTION_IDS.length; index += 1) panel.handleInput(KEYS.down);
+}
+
+test("S15: the extension registers the /herdr-status command inside Herdr", () => {
+	const { commands } = load();
+	assert.ok(commands.has("herdr-status"));
+	assert.ok((commands.get("herdr-status")!.description ?? "").length > 0, "it explains itself in the command list");
+});
+
+test("S15: without a TUI the command reports the effective config and the file path, writing nothing", async () => {
+	const { commands, configPath } = load();
+	const notifications: Notification[] = [];
+	await commands.get("herdr-status")!.handler("", {
+		mode: "rpc",
+		hasUI: false,
+		ui: { notify: (message: string, level?: string) => { notifications.push({ message, level }); } },
+	});
+	assert.equal(notifications.length, 1);
+	const [report] = notifications;
+	assert.match(report.message, /brackets/u, "the phase style in effect");
+	assert.match(report.message, /arrow/u, "the subagent style in effect");
+	assert.match(report.message, /gentle/u, "the panel name in effect");
+	assert.ok(report.message.includes(configPath), "the config file path");
+	assert.equal(existsSync(configPath), false, "nothing is written without a TUI");
+});
+
+test("S15: saving writes the JSON and applies it live, republishing the tokens", async () => {
+	const { commands, fire, last, configPath } = load();
+	await fire("session_start", { reason: "startup" });
+	await fire("tool_call", { toolCallId: "c1", toolName: "subagent_run", input: { agent: "explore", task: "x" } });
+	assert.equal(last()!.tokens[TOKEN], "↳ explore");
+	const { panel, done } = openPanel(commands);
+	moveTo(panel(), "subagentStyle");
+	panel().handleInput(KEYS.confirm);
+	assert.ok(panel().render(80).some((line) => line.includes("Subagent style: emoji")), "the draft shows the new value");
+	moveToSave(panel());
+	panel().handleInput(KEYS.confirm);
+	await done;
+	assert.deepEqual(JSON.parse(readFileSync(configPath, "utf8")), { ...DEFAULT_CONFIG, subagentStyle: "emoji" });
+	assert.equal(last()!.tokens[TOKEN], "🧭 explore", "the sidebar changes right away, without waiting for an event");
+});
+
+test("S15: Esc cancels without writing and without touching the tokens", async () => {
+	const { commands, fire, sent, configPath } = load();
+	await fire("session_start", { reason: "startup" });
+	const published = sent.length;
+	const { panel, done } = openPanel(commands);
+	moveTo(panel(), "subagentStyle");
+	panel().handleInput(KEYS.confirm);
+	panel().handleInput(KEYS.cancel);
+	await done;
+	assert.equal(existsSync(configPath), false, "nothing is written");
+	assert.equal(sent.length, published, "and nothing is republished");
+});
+
+test("S15: the panel name is text, edited in place and saved like any other option", async () => {
+	const { commands, fire, last, configPath } = load();
+	await fire("session_start", { reason: "startup" });
+	const { panel, done } = openPanel(commands);
+	moveTo(panel(), "name");
+	panel().handleInput(KEYS.confirm);
+	assert.ok(panel().render(80).some((line) => line.includes("Panel name: gentle▏")), "editing starts from the current name");
+	for (let index = 0; index < "gentle".length; index += 1) panel().handleInput("\u007f");
+	for (const char of "side") panel().handleInput(char);
+	assert.ok(panel().render(80).some((line) => line.includes("Panel name: side")), "typing edits the draft");
+	panel().handleInput(KEYS.confirm);
+	panel().handleInput(SAVE_KEY);
+	await done;
+	assert.equal(JSON.parse(readFileSync(configPath, "utf8")).name, "side");
+	assert.equal(last()!.tokens[NAME_TOKEN], "side", "the new name is published at once");
+});
+
+test("S15: an option forced by a variable is marked and cannot be changed from the panel", async () => {
+	const configPath = freshConfigPath();
+	const { commands, fire, last } = load(
+		{ ...HERDR_ENV, PI_HERDR_STATUS_STYLE: "emoji" },
+		{ configPath, readPhase: () => "exploring" },
+	);
+	await fire("session_start", { reason: "startup" });
+	await fire("agent_start", { type: "agent_start" });
+	assert.equal(last()!.tokens[PHASE_TOKEN], "🔍 exploring");
+	const { panel, done } = openPanel(commands);
+	assert.ok(panel().render(80).some((line) => line.includes("(forzado por PI_HERDR_STATUS_STYLE)")), "the row is marked");
+	panel().handleInput(KEYS.confirm);
+	panel().handleInput(SAVE_KEY);
+	await done;
+	assert.equal(JSON.parse(readFileSync(configPath, "utf8")).phaseStyle, "brackets", "the stored value is untouched");
+	assert.equal(last()!.tokens[PHASE_TOKEN], "🔍 exploring", "the variable still forces the emoji style");
+});
+
+test("S15: saving turns the changes counter on and off live", async () => {
+	const { commands, fire, changes, flush, configPath } = load(HERDR_ENV, { runGit: fakeChangesGit("6\t2\ta.ts\n").run });
+	await fire("session_start", { reason: "startup" });
+	assert.equal(changes().at(-1), null, "off by default");
+	const first = openPanel(commands);
+	moveTo(first.panel(), "changes");
+	first.panel().handleInput(KEYS.confirm);
+	first.panel().handleInput(SAVE_KEY);
+	await first.done;
+	await flush();
+	assert.equal(JSON.parse(readFileSync(configPath, "utf8")).changes, true);
+	assert.equal(changes().at(-1), "+6 -2", "the counter measures as soon as it is turned on");
+	const second = openPanel(commands);
+	moveTo(second.panel(), "changes");
+	second.panel().handleInput(KEYS.confirm);
+	second.panel().handleInput(SAVE_KEY);
+	await second.done;
+	await flush();
+	assert.equal(changes().at(-1), null, "turning it off clears the token");
+});
+
+test("S15: saving a switched-off token clears it at once, without waiting for an event", async () => {
+	const { commands, fire, last } = load();
+	await fire("session_start", { reason: "startup" });
+	await fire("tool_call", { toolCallId: "c1", toolName: "subagent_run", input: { agent: "worker", task: "x" } });
+	assert.equal(last()!.tokens[TOKEN], "↳ worker");
+	const { panel, done } = openPanel(commands);
+	moveTo(panel(), "showSubagent");
+	panel().handleInput(KEYS.confirm);
+	panel().handleInput(SAVE_KEY);
+	await done;
+	assert.equal(last()!.tokens[TOKEN], null, "the running subagent disappears right away");
+	assert.equal(last()!.tokens[NAME_TOKEN], PANEL_NAME, "the rest of the row is untouched");
 });
