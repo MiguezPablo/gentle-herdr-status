@@ -2,8 +2,8 @@
  * pi-herdr-status: shows the running subagent, what the orchestrator is doing and the
  * jobs it launched in the Herdr sidebar, as the `$name` token (`gentle`), the `$phase`
  * token (a gentle-pi ODD phase in square brackets, such as `[exploring]`, else
- * `[working]`), the `$subagent` token (`↳ explore` or `↳ worker (3)`) and the `$jobs`
- * token (`⏵ CI for PR 1834` or `⏵ logs (2)`).
+ * `[working]`), the `$subagent` token (`↳ explore` or `↳ worker (+2)`) and the `$jobs`
+ * token (`⏵ CI for PR 1834` or `⏵ logs (+1)`).
  *
  * Only presentation metadata (`pane.report_metadata`). Pane state
  * (working/blocked/idle) and desktop notifications stay with Herdr's official

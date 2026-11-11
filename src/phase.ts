@@ -1,7 +1,7 @@
 /**
  * Reads the ODD phase gentle-pi shows in its prompt label, so the sidebar can
  * repeat it next to `pi` (`pi [exploring]`) instead of guessing. The phase is the only
- * bracketed token: parentheses already mark the subagent count (`↳ explore (2)`).
+ * bracketed token: parentheses already mark the subagent count (`↳ explore (+1)`).
  *
  * Evidence (gentle-pi 4.7.0, lib/odd-phase.ts): the phase of each session lives in a
  * process-global registry stored under `Symbol.for("gentle-pi.odd-phase-registry")`,
