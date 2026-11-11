@@ -1,36 +1,39 @@
 {
-  "name": "pi-herdr-status",
-  "version": "0.1.0",
-  "description": "Pi extension that shows in the Herdr sidebar the running subagent ($subagent), the orchestrator phase ($phase), the running jobs ($jobs) and the panel name ($name). Pane state and notifications stay with Herdr's official Pi integration.",
-  "license": "MIT",
-  "author": "Pablo Miguez",
-  "type": "module",
-  "keywords": [
-    "pi-package",
-    "pi-extension",
-    "herdr",
-    "subagents",
-    "jobs"
-  ],
-  "pi": {
-    "extensions": ["./extensions/pi-herdr-status.ts"]
-  },
-  "files": [
-    "extensions",
-    "src",
-    "LICENSE",
-    "README.md"
-  ],
-  "scripts": {
-    "test": "node --test",
-    "typecheck": "tsc --noEmit"
-  },
-  "peerDependencies": {
-    "@earendil-works/pi-coding-agent": "*"
-  },
-  "devDependencies": {
-    "@earendil-works/pi-coding-agent": "^1.5.2",
-    "@types/node": "^24.0.0",
-    "typescript": "^5.9.0"
-  }
+	"name": "pi-herdr-status",
+	"version": "0.1.0",
+	"description": "Pi extension that shows in the Herdr sidebar the running subagent ($subagent), the orchestrator phase ($phase), the running jobs ($jobs) and the panel name ($name). Pane state and notifications stay with Herdr's official Pi integration.",
+	"license": "MIT",
+	"author": "Pablo Miguez",
+	"type": "module",
+	"keywords": [
+		"pi-package",
+		"pi-extension",
+		"herdr",
+		"subagents",
+		"jobs"
+	],
+	"pi": {
+		"extensions": [
+			"./extensions/pi-herdr-status.ts"
+		]
+	},
+	"files": [
+		"extensions",
+		"src",
+		"LICENSE",
+		"README.md"
+	],
+	"scripts": {
+		"test": "node --test",
+		"typecheck": "tsc --noEmit"
+	},
+	"peerDependencies": {
+		"@earendil-works/pi-coding-agent": "*",
+		"@earendil-works/pi-tui": "*"
+	},
+	"devDependencies": {
+		"@earendil-works/pi-coding-agent": "^1.5.2",
+		"@types/node": "^24.0.0",
+		"typescript": "^5.9.0"
+	}
 }
