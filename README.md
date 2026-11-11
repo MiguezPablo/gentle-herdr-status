@@ -207,17 +207,27 @@ above. With `colors: true` the cells become Herdr style tables (`{ token = "…"
 rules = […] }`), which is where colors live: `fg` takes a strict hex color and `rules`
 compare the reported value, first match wins.
 
-| Token | Style |
+| Token | Color |
 | --- | --- |
 | `$name` | none: the panel name keeps the terminal's default color. |
-| `$phase` | one rule per phase, with `contains` and `ignore_case` so both styles match: exploring/researching blue, planning/deciding/authorizing mauve, implementing yellow, checking green, closing grey. |
-| `$changes` | a neutral foreground: one color cannot paint `+` green and `-` red inside the same token, so it is not attempted. |
-| `$subagent` | sky (`#89dceb`). |
-| `$jobs` | grey (`#7f849c`). |
+| `$phase` | one rule per phase, with `contains` and `ignore_case` so both styles match: exploring/researching the `toolTitle` role of the theme, planning/deciding/authorizing `accent`, implementing `warning`, checking `success`, closing `dim`. |
+| `$changes` | the `text` role: one color cannot paint `+` green and `-` red inside the same token, so it is not attempted. |
+| `$subagent` | the `accent` role. |
+| `$jobs` | the `muted` role. |
 
-The hex values are the Catppuccin Mocha palette (`#89b4fa` blue, `#cba6f7` mauve,
-`#f9e2af` yellow, `#a6e3a1` green, `#7f849c` overlay, `#89dceb` sky, `#cdd6f4` neutral), so
-they do not follow Herdr's own theme. Colors are off by default, like everything else.
+Those roles come from the Pi/Gentle Shell theme that is active when you run the sync: the
+panel reads `ctx.ui.theme.colors`, converts each role to hex and writes it, so the sidebar
+follows the same palette as the rest of Pi instead of inventing one. Every `fg` has to be a
+strict `#RRGGBB` hex, so a role the theme does not define, or one whose value does not
+validate, leaves that cell on the fallback of the built-in Catppuccin Mocha palette (blue
+`#89b4fa` for exploring/researching — and for the same group when the theme has no
+`toolTitle`, which falls back to `accent` —, mauve `#cba6f7` for
+planning/deciding/authorizing, yellow `#f9e2af` for implementing, green `#a6e3a1` for
+checking, overlay `#7f849c` for closing and `$jobs`, sky `#89dceb` for `$subagent` and
+neutral `#cdd6f4` for `$changes`). A theme that cannot be read at all leaves the whole row
+on that palette, so the sync never fails over a theme. The block is a copy, not a live
+link: **run Sync Herdr rows again if you change the theme**. Colors are off by default,
+like everything else.
 
 To undo it by hand: delete the block from `# BEGIN pi-herdr-status …` through
 `# END pi-herdr-status` (or restore `<config>.pi-herdr-status.bak`) and run

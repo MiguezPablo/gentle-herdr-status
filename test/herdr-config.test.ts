@@ -35,6 +35,7 @@ import {
 	type RowCell,
 	type SidebarRow,
 	type StyledCell,
+	type ThemeHexes,
 } from "../src/herdr-config.ts";
 
 /** Todo test trabaja en un directorio temporal, nunca en el config real de Herdr. */
@@ -187,6 +188,153 @@ test("S16: the colored rows render as valid Herdr inline tables with rules", () 
 		renderRows(sidebarRows(withColors())),
 		'[["state_icon", "machine", "workspace", "tab"], ["$name", { token = "$phase", rules = [{ contains = "exploring", ignore_case = true, fg = "#89b4fa" }, { contains = "researching", ignore_case = true, fg = "#89b4fa" }, { contains = "planning", ignore_case = true, fg = "#cba6f7" }, { contains = "deciding", ignore_case = true, fg = "#cba6f7" }, { contains = "authorizing", ignore_case = true, fg = "#cba6f7" }, { contains = "implementing", ignore_case = true, fg = "#f9e2af" }, { contains = "checking", ignore_case = true, fg = "#a6e3a1" }, { contains = "closing", ignore_case = true, fg = "#7f849c" }] }], [{ token = "$subagent", fg = "#89dceb" }], [{ token = "$jobs", fg = "#7f849c" }]]',
 	);
+});
+
+/** Hex del tema activo, todos distintos para ver de qué rol sale cada celda (S20). */
+const THEME_HEXES: ThemeHexes = {
+	text: "#111111",
+	toolTitle: "#222222",
+	accent: "#333333",
+	warning: "#444444",
+	success: "#555555",
+	dim: "#666666",
+	muted: "#777777",
+};
+
+test("S20: with theme hexes every colored cell takes the hex of its role", () => {
+	const rows = sidebarRows(withColors({ changes: true }), THEME_HEXES);
+	assert.equal(rows[1][0], "$name", "$name stays a plain token");
+	const phase = styled(rows, "$phase");
+	assert.ok(phase?.rules, "the phase still colors itself through its rules");
+	assert.equal(phase.fg, undefined, "the phase has no fixed fg, so its rules decide");
+	assert.deepEqual(phase.rules.map((rule) => [rule.contains, rule.fg]), [
+		["exploring", THEME_HEXES.toolTitle],
+		["researching", THEME_HEXES.toolTitle],
+		["planning", THEME_HEXES.accent],
+		["deciding", THEME_HEXES.accent],
+		["authorizing", THEME_HEXES.accent],
+		["implementing", THEME_HEXES.warning],
+		["checking", THEME_HEXES.success],
+		["closing", THEME_HEXES.dim],
+	]);
+	assert.deepEqual(styled(rows, "$changes"), { token: "$changes", fg: THEME_HEXES.text });
+	assert.deepEqual(styled(rows, "$subagent"), { token: "$subagent", fg: THEME_HEXES.accent });
+	assert.deepEqual(styled(rows, "$jobs"), { token: "$jobs", fg: THEME_HEXES.muted });
+});
+
+test("S20: a missing role falls back per cell, and exploring falls back from toolTitle to accent", () => {
+	const withAccent = sidebarRows(withColors({ changes: true }), { accent: "#333333" });
+	assert.deepEqual(styled(withAccent, "$phase")?.rules?.map((rule) => rule.fg), [
+		"#333333",
+		"#333333",
+		"#333333",
+		"#333333",
+		"#333333",
+		PALETTE.yellow,
+		PALETTE.green,
+		PALETTE.overlay,
+	], "without toolTitle the exploring group uses accent; the rest keeps the palette");
+	assert.deepEqual(
+		styled(withAccent, "$changes"),
+		{ token: "$changes", fg: PALETTE.neutral },
+		"a missing text role falls back to the neutral hex of that cell",
+	);
+	assert.deepEqual(styled(withAccent, "$subagent"), { token: "$subagent", fg: "#333333" });
+	assert.deepEqual(
+		styled(withAccent, "$jobs"),
+		{ token: "$jobs", fg: PALETTE.overlay },
+		"a missing muted role falls back to the overlay hex of that cell",
+	);
+	const bare = styled(sidebarRows(withColors(), { muted: "#777777" }), "$phase");
+	assert.deepEqual(bare?.rules?.map((rule) => rule.fg), [
+		PALETTE.blue,
+		PALETTE.blue,
+		PALETTE.mauve,
+		PALETTE.mauve,
+		PALETTE.mauve,
+		PALETTE.yellow,
+		PALETTE.green,
+		PALETTE.overlay,
+	], "without toolTitle nor accent the palette of each phase is used");
+});
+
+test("S20: a hex that is not #RRGGBB falls back to the palette of that cell", () => {
+	const rows = sidebarRows(withColors({ changes: true }), {
+		text: "#12345",
+		toolTitle: "blue",
+		accent: "#ABCDEF",
+		warning: "#12345g",
+		success: "#abcdef\u0000",
+		dim: "",
+		muted: " #777777",
+	});
+	assert.deepEqual(
+		styled(rows, "$changes"),
+		{ token: "$changes", fg: PALETTE.neutral },
+		"a short hex is not a color and the cell falls back",
+	);
+	assert.deepEqual(
+		styled(rows, "$subagent"),
+		{ token: "$subagent", fg: "#ABCDEF" },
+		"a valid hex in either case is used as written",
+	);
+	assert.deepEqual(styled(rows, "$jobs"), { token: "$jobs", fg: PALETTE.overlay }, "a padded hex is not a color");
+	assert.deepEqual(styled(rows, "$phase")?.rules?.map((rule) => rule.fg), [
+		"#ABCDEF",
+		"#ABCDEF",
+		"#ABCDEF",
+		"#ABCDEF",
+		"#ABCDEF",
+		PALETTE.yellow,
+		PALETTE.green,
+		PALETTE.overlay,
+	], "an invalid toolTitle falls back to accent, and invalid phase roles to their palette hex");
+});
+
+test("S20 PRESERVE: without theme hexes the row is byte for byte the one of today", () => {
+	const config = withColors({ changes: true });
+	assert.deepEqual(sidebarRows(config, undefined), sidebarRows(config));
+	assert.deepEqual(
+		sidebarRows(config, {}),
+		sidebarRows(config),
+		"an empty theme object is the same as no theme at all",
+	);
+	assert.equal(renderRows(sidebarRows(config, undefined)), renderRows(sidebarRows(config)));
+	assert.equal(managedBlock(config, undefined), managedBlock(config));
+	assert.equal(
+		managedBlock(DEFAULT_CONFIG, THEME_HEXES),
+		managedBlock(DEFAULT_CONFIG),
+		"with colors off the theme is not involved at all",
+	);
+	assert.deepEqual(sidebarRows(DEFAULT_CONFIG, THEME_HEXES), sidebarRows(DEFAULT_CONFIG));
+});
+
+test("S20: the managed block writes the theme hexes it was given", () => {
+	const block = managedBlock(withColors(), THEME_HEXES);
+	assert.match(block, /contains = "exploring", ignore_case = true, fg = "#222222"/u, "exploring uses toolTitle");
+	assert.match(block, /contains = "implementing", ignore_case = true, fg = "#444444"/u);
+	assert.match(block, /token = "\$subagent", fg = "#333333"/u);
+	assert.match(block, /token = "\$jobs", fg = "#777777"/u);
+	assert.ok(!block.includes(PALETTE.sky), "no palette hex where the theme has one");
+});
+
+test("S20: the sync writes the theme hexes it received and the palette when it gets none", async () => {
+	await withTempDir(async (dir) => {
+		const path = join(dir, "config.toml");
+		writeFileSync(path, "[ui.sound]\nenabled = true\n");
+		const herdr = fakeHerdr();
+		const result = await syncHerdrRows({
+			config: withColors({ changes: true }),
+			env: { [HERDR_CONFIG_ENV]: path },
+			run: herdr.run,
+			theme: THEME_HEXES,
+		});
+		assert.equal(result.status, "ok");
+		const written = readFileSync(path, "utf8");
+		assert.match(written, /fg = "#111111"/u, "the text role colors $changes");
+		assert.match(written, /fg = "#333333"/u, "the accent role colors $subagent");
+		assert.ok(!written.includes(PALETTE.sky), "no palette hex where the theme has one");
+	});
 });
 
 test("S16: the managed block is marked with BEGIN and END and holds the rows_by_agent table", () => {

@@ -35,6 +35,7 @@ import type {
 	KeybindingsManager,
 	Theme,
 } from "@earendil-works/pi-coding-agent";
+import { colorToHex, type Color } from "@earendil-works/pi-tui";
 
 import { ChangesCounter, type GitRun } from "../src/changes.ts";
 import {
@@ -56,7 +57,7 @@ import {
 	type OptionRow,
 } from "../src/config.ts";
 import { createDebug, type DebugWriter } from "../src/debug.ts";
-import { syncHerdrRows, type HerdrFs, type HerdrRun } from "../src/herdr-config.ts";
+import { syncHerdrRows, type HerdrFs, type HerdrRun, type ThemeHexes, type ThemeRole } from "../src/herdr-config.ts";
 import {
 	CHANGES_TOKEN,
 	JOBS_TOKEN,
@@ -109,6 +110,17 @@ const BACKSPACE_KEYS: ReadonlySet<string> = new Set(["\u007f", "\b"]);
 type PanelTui = { requestRender?(): void; invalidate?(): void };
 type PanelTheme = Pick<Theme, "fg" | "bold">;
 type PanelKeys = Pick<KeybindingsManager, "matches">;
+
+/** Los roles del tema que la fila de Herdr usa como `fg` (S20). */
+const THEME_ROLES: readonly ThemeRole[] = [
+	"text",
+	"toolTitle",
+	"accent",
+	"warning",
+	"success",
+	"dim",
+	"muted",
+];
 
 type PanelOptions = {
 	/** Copia editable de lo guardado: hasta guardar no se escribe nada. */
@@ -310,6 +322,32 @@ function reason(error: unknown): string {
 	return error instanceof Error ? error.message : String(error);
 }
 
+/**
+ * Los hex del tema activo de Pi/Gentle Shell, ya resueltos por rol (S20). Sin tema, sin
+ * `colors` o con un tema que lanza, devuelve undefined y la fila vuelve a la paleta fija:
+ * el sync nunca se rompe por el tema. Un rol que no se puede convertir queda fuera y esa
+ * celda usa su hex de la paleta.
+ */
+function themeHexes(ui: unknown): ThemeHexes | undefined {
+	try {
+		const colors = (ui as { theme?: { colors?: Readonly<Record<string, unknown>> } } | undefined)?.theme
+			?.colors;
+		if (!colors) return undefined;
+		const hexes: ThemeHexes = {};
+		for (const role of THEME_ROLES) {
+			try {
+				const color = colors[role];
+				if (color !== undefined) hexes[role] = colorToHex(color as Color);
+			} catch {
+				// Un rol que el tema no puede convertir queda fuera: lo cubre la paleta.
+			}
+		}
+		return hexes;
+	} catch {
+		return undefined;
+	}
+}
+
 export function createExtension(deps: ExtensionDeps = {}) {
 	return (pi: ExtensionAPI): void => {
 		const env = deps.env ?? process.env;
@@ -459,10 +497,13 @@ export function createExtension(deps: ExtensionDeps = {}) {
 				ctx.ui.notify(`Herdr status: saved to ${path}`, "info");
 				return;
 			}
-			// Sync: la fila de Herdr se arma con la config en efecto recién guardada.
+			// Sync: la fila de Herdr se arma con la config en efecto recién guardada; los colores
+			// salen del tema activo de Pi/Gentle Shell, con la paleta fija como fallback (S20).
 			const sync = await syncHerdrRows({
 				config: settings,
 				env,
+				// Con los colores apagados el tema ni se lee: la fila es la de siempre.
+				theme: settings.colors ? themeHexes(ctx.ui) : undefined,
 				fs: deps.herdrFs,
 				run: deps.herdrRun,
 			});

@@ -83,6 +83,27 @@ export const PALETTE = {
 	neutral: "#cdd6f4",
 } as const;
 
+/** Roles del tema activo de Pi que este paquete usa como `fg` (S20). */
+export type ThemeRole = "text" | "toolTitle" | "accent" | "warning" | "success" | "dim" | "muted";
+
+/**
+ * Hex ya resueltos del tema activo, por rol. Los resuelve la extensión desde `ctx.ui.theme`;
+ * un rol ausente o inválido hace que esa celda use su hex de `PALETTE`.
+ */
+export type ThemeHexes = Partial<Record<ThemeRole, string>>;
+
+/** Un `fg` de Herdr es estricto: sólo `#RRGGBB` (S16); cualquier otra cosa cae a la paleta. */
+export const HEX_PATTERN = /^#[0-9a-fA-F]{6}$/u;
+
+/** El hex del primer rol del tema que exista y valide; si no, el de la paleta de esa celda. */
+function themeHex(hexes: ThemeHexes | undefined, roles: readonly ThemeRole[], fallback: string): string {
+	for (const role of roles) {
+		const value = hexes?.[role];
+		if (typeof value === "string" && HEX_PATTERN.test(value)) return value;
+	}
+	return fallback;
+}
+
 /** Una condición de estilo de Herdr: un `contains` sobre el valor del token. */
 export type StyleRule = { contains: string; ignore_case: true; fg: string };
 /** Una celda con estilo propio (tabla inline de Herdr). */
@@ -96,17 +117,37 @@ export type SidebarRow = RowCell[];
  * Color de cada fase (S16): se busca con `contains` e `ignore_case` porque el token es
  * `[exploring]` con el estilo por defecto y `🔍 exploring` con el estilo emoji. El orden
  * es el de la lista de fases y es el que Herdr evalúa: gana la primera coincidencia.
+ *
+ * `roles` es el mapeo rol del tema → fase (S20): el primero que exista y valide manda, y
+ * si ninguno lo hace se usa el hex de la paleta de esa misma fase. `toolTitle` cae a
+ * `accent` porque es el rol que el tema define para los títulos de herramientas.
  */
-export const PHASE_RULES: readonly StyleRule[] = [
-	{ contains: "exploring", ignore_case: true, fg: PALETTE.blue },
-	{ contains: "researching", ignore_case: true, fg: PALETTE.blue },
-	{ contains: "planning", ignore_case: true, fg: PALETTE.mauve },
-	{ contains: "deciding", ignore_case: true, fg: PALETTE.mauve },
-	{ contains: "authorizing", ignore_case: true, fg: PALETTE.mauve },
-	{ contains: "implementing", ignore_case: true, fg: PALETTE.yellow },
-	{ contains: "checking", ignore_case: true, fg: PALETTE.green },
-	{ contains: "closing", ignore_case: true, fg: PALETTE.overlay },
+const PHASE_COLORS: ReadonlyArray<{
+	contains: string;
+	roles: readonly ThemeRole[];
+	fallback: string;
+}> = [
+	{ contains: "exploring", roles: ["toolTitle", "accent"], fallback: PALETTE.blue },
+	{ contains: "researching", roles: ["toolTitle", "accent"], fallback: PALETTE.blue },
+	{ contains: "planning", roles: ["accent"], fallback: PALETTE.mauve },
+	{ contains: "deciding", roles: ["accent"], fallback: PALETTE.mauve },
+	{ contains: "authorizing", roles: ["accent"], fallback: PALETTE.mauve },
+	{ contains: "implementing", roles: ["warning"], fallback: PALETTE.yellow },
+	{ contains: "checking", roles: ["success"], fallback: PALETTE.green },
+	{ contains: "closing", roles: ["dim"], fallback: PALETTE.overlay },
 ];
+
+/** Las reglas de fase, con los hex del tema activo que se le pasen o la paleta de siempre. */
+export function phaseRules(hexes?: ThemeHexes): StyleRule[] {
+	return PHASE_COLORS.map((entry) => ({
+		contains: entry.contains,
+		ignore_case: true,
+		fg: themeHex(hexes, entry.roles, entry.fallback),
+	}));
+}
+
+/** Las reglas de fase con la paleta fija: el resultado cuando no hay tema activo. */
+export const PHASE_RULES: readonly StyleRule[] = phaseRules();
 
 /** Ruta del config de Herdr, resuelta desde el `env` inyectable. */
 export function herdrConfigPath(env: Env): string {
@@ -127,13 +168,14 @@ export function herdrBin(env: Env): string {
  * la fila es exactamente la que el usuario ya tenía. Con colores: `$name` sigue siendo
  * texto (no se colorea), `$phase` lleva una rule por fase, `$changes` un `fg` neutro
  * (un color por signo no aplica a `+` y `-` a la vez), `$subagent` celeste y `$jobs` gris.
+ * Los hex salen del tema activo cuando se los pasa; sin tema, de la paleta de siempre.
  */
-function cell(token: string, config: HerdrStatusConfig): RowCell {
+function cell(token: string, config: HerdrStatusConfig, hexes?: ThemeHexes): RowCell {
 	if (!config.colors) return `$${token}`;
-	if (token === PHASE_TOKEN) return { token: `$${token}`, rules: PHASE_RULES.map((rule) => ({ ...rule })) };
-	if (token === CHANGES_TOKEN) return { token: `$${token}`, fg: PALETTE.neutral };
-	if (token === TOKEN) return { token: `$${token}`, fg: PALETTE.sky };
-	if (token === JOBS_TOKEN) return { token: `$${token}`, fg: PALETTE.overlay };
+	if (token === PHASE_TOKEN) return { token: `$${token}`, rules: phaseRules(hexes) };
+	if (token === CHANGES_TOKEN) return { token: `$${token}`, fg: themeHex(hexes, ["text"], PALETTE.neutral) };
+	if (token === TOKEN) return { token: `$${token}`, fg: themeHex(hexes, ["accent"], PALETTE.sky) };
+	if (token === JOBS_TOKEN) return { token: `$${token}`, fg: themeHex(hexes, ["muted"], PALETTE.overlay) };
 	return `$${token}`;
 }
 
@@ -141,12 +183,12 @@ function cell(token: string, config: HerdrStatusConfig): RowCell {
  * Las filas de la fila `pi`: las de por defecto más `$name`/`$phase`/`$changes` juntos y
  * `$subagent` y `$jobs` en filas propias, que desaparecen cuando su token está apagado.
  */
-export function sidebarRows(config: HerdrStatusConfig): SidebarRow[] {
-	const nameRow: SidebarRow = [cell(NAME_TOKEN, config), cell(PHASE_TOKEN, config)];
-	if (config.changes) nameRow.push(cell(CHANGES_TOKEN, config));
+export function sidebarRows(config: HerdrStatusConfig, hexes?: ThemeHexes): SidebarRow[] {
+	const nameRow: SidebarRow = [cell(NAME_TOKEN, config), cell(PHASE_TOKEN, config, hexes)];
+	if (config.changes) nameRow.push(cell(CHANGES_TOKEN, config, hexes));
 	const rows: SidebarRow[] = [["state_icon", "machine", "workspace", "tab"], nameRow];
-	if (config.showSubagent) rows.push([cell(TOKEN, config)]);
-	if (config.showJobs) rows.push([cell(JOBS_TOKEN, config)]);
+	if (config.showSubagent) rows.push([cell(TOKEN, config, hexes)]);
+	if (config.showJobs) rows.push([cell(JOBS_TOKEN, config, hexes)]);
 	return rows;
 }
 
@@ -173,11 +215,11 @@ export function renderRows(rows: readonly SidebarRow[]): string {
 }
 
 /** El bloque gestionado completo, sin el salto de línea final. */
-export function managedBlock(config: HerdrStatusConfig): string {
+export function managedBlock(config: HerdrStatusConfig, hexes?: ThemeHexes): string {
 	return [
 		BEGIN_MARK,
 		TABLE_HEADER,
-		`${AGENT_ID} = ${renderRows(sidebarRows(config))}`,
+		`${AGENT_ID} = ${renderRows(sidebarRows(config, hexes))}`,
 		END_MARK,
 	].join("\n");
 }
@@ -351,6 +393,8 @@ export type SyncResult = { status: SyncStatus; path: string; reason?: string };
 export type SyncOptions = {
 	config: HerdrStatusConfig;
 	env: Env;
+	/** Hex del tema activo de Pi; sin ellos la fila usa la paleta fija (S20). */
+	theme?: ThemeHexes;
 	fs?: HerdrFs;
 	run?: HerdrRun;
 };
@@ -396,7 +440,7 @@ export async function syncHerdrRows(options: SyncOptions): Promise<SyncResult> {
 	if (current === undefined) {
 		return { status: "error", path, reason: `no Herdr config at ${path}; nothing was written` };
 	}
-	const plan = planSync(current, managedBlock(options.config));
+	const plan = planSync(current, managedBlock(options.config, options.theme));
 	if (plan.status === "denied") return { status: "denied", path, reason: plan.reason };
 	const backup = `${path}${BACKUP_SUFFIX}`;
 	const temporary = `${path}.${process.pid}.tmp`;

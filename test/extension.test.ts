@@ -804,7 +804,7 @@ const KEYS: Record<"up" | "down" | "confirm" | "cancel", string> = {
 const SAVE_KEY = "\u0013";
 
 /** Contexto de comando con un `ui.custom` que entrega el panel al test. */
-function commandUi(sessionId = "s1") {
+function commandUi(sessionId = "s1", commandTheme: unknown = undefined) {
 	const notifications: Notification[] = [];
 	let panel: Panel | undefined;
 	const ctx = {
@@ -812,6 +812,8 @@ function commandUi(sessionId = "s1") {
 		hasUI: true,
 		sessionManager: { getSessionId: () => sessionId },
 		ui: {
+			// El tema que ve el sync (`ctx.ui.theme`): sin él, la fila usa la paleta fija.
+			theme: commandTheme,
 			notify: (message: string, level?: string) => { notifications.push({ message, level }); },
 			custom: (factory: (tui: unknown, theme: unknown, keybindings: unknown, done: (value: unknown) => void) => Panel) =>
 				new Promise((resolve) => {
@@ -844,10 +846,10 @@ function commandUi(sessionId = "s1") {
 }
 
 /** Abre el panel del comando y devuelve lo necesario para manejarlo y esperarlo. */
-function openPanel(commands: Map<string, CommandOptions>) {
+function openPanel(commands: Map<string, CommandOptions>, commandTheme: unknown = undefined) {
 	const command = commands.get("herdr-status");
 	assert.ok(command, "the extension registers the command");
-	const ui = commandUi();
+	const ui = commandUi("s1", commandTheme);
 	return { ui, panel: ui.panel, done: command.handler("", ui.ctx) };
 }
 
@@ -1061,6 +1063,64 @@ function fakeHerdrRun(options: { check?: boolean; reload?: boolean } = {}) {
 	return { calls, run };
 }
 
+test("S20: Sync Herdr rows takes the fg colors from the active Pi theme", async () => {
+	const herdrPath = freshHerdrPath("theme", "[ui.sound]\nenabled = true\n");
+	const herdr = fakeHerdrRun();
+	const { commands, fire } = load({ ...HERDR_ENV, [HERDR_CONFIG_ENV]: herdrPath }, { herdrRun: herdr.run });
+	await fire("session_start", { reason: "startup" });
+	const { panel, done } = openPanel(commands, fakeTheme());
+	moveTo(panel(), "colors");
+	panel().handleInput(KEYS.confirm);
+	moveToSync(panel());
+	panel().handleInput(KEYS.confirm);
+	await done;
+	const written = readFileSync(herdrPath, "utf8");
+	assert.match(written, /contains = "exploring", ignore_case = true, fg = "#222222"/u, "exploring uses toolTitle");
+	assert.match(written, /contains = "planning", ignore_case = true, fg = "#333333"/u, "planning uses accent");
+	assert.match(written, /contains = "implementing", ignore_case = true, fg = "#444444"/u, "implementing uses warning");
+	assert.match(written, /contains = "checking", ignore_case = true, fg = "#555555"/u, "checking uses success");
+	assert.match(written, /contains = "closing", ignore_case = true, fg = "#666666"/u, "closing uses dim");
+	assert.match(written, /token = "\$subagent", fg = "#333333"/u, "$subagent uses accent");
+	assert.match(written, /token = "\$jobs", fg = "#777777"/u, "$jobs uses muted");
+	assert.ok(!written.includes("#89dceb"), "no palette hex where the theme has one");
+});
+
+test("S20: a theme without colors or a throwing theme falls back to the palette and never breaks the sync", async () => {
+	const barePath = freshHerdrPath("theme-bare", "[ui.sound]\nenabled = true\n");
+	const bare = fakeHerdrRun();
+	const first = load({ ...HERDR_ENV, [HERDR_CONFIG_ENV]: barePath }, { herdrRun: bare.run });
+	await first.fire("session_start", { reason: "startup" });
+	const barePanel = openPanel(first.commands, {});
+	moveTo(barePanel.panel(), "colors");
+	barePanel.panel().handleInput(KEYS.confirm);
+	moveToSync(barePanel.panel());
+	barePanel.panel().handleInput(KEYS.confirm);
+	await barePanel.done;
+	assert.match(readFileSync(barePath, "utf8"), /fg = "#89dceb"/u, "an empty theme keeps the fixed palette");
+
+	const brokenPath = freshHerdrPath("theme-broken", "[ui.sound]\nenabled = true\n");
+	const broken = fakeHerdrRun();
+	const second = load({ ...HERDR_ENV, [HERDR_CONFIG_ENV]: brokenPath }, { herdrRun: broken.run });
+	await second.fire("session_start", { reason: "startup" });
+	const throwing = {
+		get colors(): unknown {
+			throw new Error("no theme in this mode");
+		},
+	};
+	const brokenPanel = openPanel(second.commands, throwing);
+	moveTo(brokenPanel.panel(), "colors");
+	brokenPanel.panel().handleInput(KEYS.confirm);
+	moveToSync(brokenPanel.panel());
+	brokenPanel.panel().handleInput(KEYS.confirm);
+	await brokenPanel.done;
+	const written = readFileSync(brokenPath, "utf8");
+	assert.match(written, /# BEGIN pi-herdr-status/u, "the sync still writes the block");
+	assert.match(written, /fg = "#89dceb"/u, "and falls back to the palette");
+	const notice = brokenPanel.ui.notifications.at(-1);
+	assert.equal(notice?.level, "info", "no error is reported either");
+	assert.match(notice?.message ?? "", /synced/u);
+});
+
 /** Baja el cursor hasta la fila de Sync Herdr rows, después de la de guardar. */
 function moveToSync(panel: Panel): void {
 	for (let index = 0; index <= OPTION_IDS.length; index += 1) panel.handleInput(KEYS.down);
@@ -1072,6 +1132,32 @@ function freshHerdrPath(name: string, content?: string): string {
 	mkdirSync(dirname(path), { recursive: true });
 	if (content !== undefined) writeFileSync(path, content);
 	return path;
+}
+
+/** Un color del tema, con la forma que devuelve `theme.colors[token]` (S20). */
+const rgbHex = (hex: string) => ({
+	kind: "rgb",
+	r: Number.parseInt(hex.slice(1, 3), 16),
+	g: Number.parseInt(hex.slice(3, 5), 16),
+	b: Number.parseInt(hex.slice(5, 7), 16),
+});
+
+/** Hex del tema activo, todos distintos para ver de qué rol sale cada celda (S20). */
+const THEME_HEXES: Record<string, string> = {
+	text: "#111111",
+	toolTitle: "#222222",
+	accent: "#333333",
+	warning: "#444444",
+	success: "#555555",
+	dim: "#666666",
+	muted: "#777777",
+};
+
+/** Tema falso de Pi: `colors` con los tokens ya resueltos que este paquete usa. */
+function fakeTheme(overrides: Record<string, unknown> = {}) {
+	const colors: Record<string, unknown> = {};
+	for (const [role, hex] of Object.entries(THEME_HEXES)) colors[role] = rgbHex(hex);
+	return { colors: { ...colors, ...overrides } };
 }
 
 test("S16: the panel lists the sidebar colors option and the Sync Herdr rows action", async () => {
