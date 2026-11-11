@@ -1,5 +1,14 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import {
+	chmodSync,
+	existsSync,
+	mkdtempSync,
+	readFileSync,
+	readdirSync,
+	rmSync,
+	statSync,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -16,10 +25,12 @@ import {
 	herdrBin,
 	herdrConfigPath,
 	managedBlock,
+	nodeHerdrFs,
 	planSync,
 	renderRows,
 	sidebarRows,
 	syncHerdrRows,
+	type HerdrFs,
 	type HerdrRun,
 	type RowCell,
 	type SidebarRow,
@@ -58,6 +69,20 @@ function styled(rows: SidebarRow[], token: string): StyledCell | undefined {
 /** Todas las celdas de todas las filas, sin distinguir de qué fila salieron. */
 function cells(rows: SidebarRow[]): RowCell[] {
 	return rows.flat();
+}
+
+/**
+ * fs real con un gancho: después de escribir el temporal, otra persona edita el config.
+ * Así el test cae justo en la ventana entre escribir el temporal y renombrarlo.
+ */
+function fsEditingAfterTemporaryWrite(configPath: string, concurrent: string): HerdrFs {
+	return {
+		...nodeHerdrFs,
+		writeFile(path, content) {
+			nodeHerdrFs.writeFile(path, content);
+			if (path !== configPath) writeFileSync(configPath, concurrent);
+		},
+	};
 }
 
 /** Runner falso: registra cada invocación y responde lo que el test pida. */
@@ -430,5 +455,113 @@ test("S16: a reload failure is reported as an error without touching the checked
 		assert.equal(result.status, "error");
 		assert.match(result.reason ?? "", /reload-config/u);
 		assert.match(readFileSync(path, "utf8"), /# BEGIN pi-herdr-status/u, "the checked config stays in place");
+	});
+});
+
+test("S16 R1: the sync keeps the mode of the original file even with umask 022", async () => {
+	const original = "[ui.sound]\nenabled = true\n";
+	const previousUmask = process.umask(0o022);
+	try {
+		await withTempDir(async (dir) => {
+			const path = join(dir, "config.toml");
+			writeFileSync(path, original);
+			// writeFileSync ya aplica el umask, así que el modo se fija a mano.
+			chmodSync(path, 0o664);
+			assert.equal(statSync(path).mode & 0o777, 0o664, "the test starts from a 664 file");
+			const herdr = fakeHerdr();
+			const result = await syncHerdrRows({
+				config: DEFAULT_CONFIG,
+				env: { [HERDR_CONFIG_ENV]: path },
+				run: herdr.run,
+			});
+			assert.equal(result.status, "ok");
+			assert.equal(statSync(path).mode & 0o777, 0o664, "the written file keeps the original permissions");
+		});
+	} finally {
+		process.umask(previousUmask);
+	}
+});
+
+test("S16 R2: a second sync never overwrites the backup of the first one", async () => {
+	const original = LEGACY;
+	await withTempDir(async (dir) => {
+		const path = join(dir, "config.toml");
+		const backup = `${path}${BACKUP_SUFFIX}`;
+		writeFileSync(path, original);
+		const herdr = fakeHerdr();
+		const env = { [HERDR_CONFIG_ENV]: path };
+		assert.equal((await syncHerdrRows({ config: DEFAULT_CONFIG, env, run: herdr.run })).status, "ok");
+		assert.equal(readFileSync(backup, "utf8"), original, "the backup keeps the version before the first sync");
+		assert.equal((await syncHerdrRows({ config: withColors(), env, run: herdr.run })).status, "ok");
+		assert.equal(readFileSync(backup, "utf8"), original, "the second sync leaves the backup alone");
+		assert.match(readFileSync(path, "utf8"), /fg = "#89dceb"/u, "the config itself did follow the second sync");
+	});
+});
+
+test("S16 R2: a failed check restores the bytes of this sync, not whatever the backup holds", async () => {
+	const original = "[ui.sound]\nenabled = false\n";
+	const stale = "# an older version from the first sync\n";
+	await withTempDir(async (dir) => {
+		const path = join(dir, "config.toml");
+		const backup = `${path}${BACKUP_SUFFIX}`;
+		writeFileSync(path, original);
+		writeFileSync(backup, stale);
+		const herdr = fakeHerdr({ check: false, output: "unknown key" });
+		const result = await syncHerdrRows({
+			config: DEFAULT_CONFIG,
+			env: { [HERDR_CONFIG_ENV]: path },
+			run: herdr.run,
+		});
+		assert.equal(result.status, "error");
+		assert.equal(readFileSync(path, "utf8"), original, "the in-memory copy of this sync is what comes back");
+		assert.equal(readFileSync(backup, "utf8"), stale, "the existing backup is never touched");
+	});
+});
+
+test("S16 R3: an edit made before the rename is never overwritten", async () => {
+	const original = "[ui.sound]\nenabled = true\n";
+	const concurrent = "# someone else edited this during the sync\n";
+	await withTempDir(async (dir) => {
+		const path = join(dir, "config.toml");
+		writeFileSync(path, original);
+		const herdr = fakeHerdr();
+		const result = await syncHerdrRows({
+			config: DEFAULT_CONFIG,
+			env: { [HERDR_CONFIG_ENV]: path },
+			fs: fsEditingAfterTemporaryWrite(path, concurrent),
+			run: herdr.run,
+		});
+		assert.equal(result.status, "error");
+		assert.match(result.reason ?? "", /changed/u, "the error says the file changed during the sync");
+		assert.match(result.reason ?? "", /nothing was written/u);
+		assert.equal(readFileSync(path, "utf8"), concurrent, "the concurrent edit survives");
+		assert.equal(existsSync(`${path}${BACKUP_SUFFIX}`), false, "no backup for a sync that never wrote");
+		assert.deepEqual(readdirSync(dir), ["config.toml"], "no temporary file left");
+		assert.deepEqual(herdr.calls, [], "herdr is not invoked either");
+	});
+});
+
+test("S16 R3: a failed check does not restore over an edit made during the check", async () => {
+	const original = "[ui.sound]\nenabled = true\n";
+	const concurrent = "# edited while herdr was checking\n";
+	await withTempDir(async (dir) => {
+		const path = join(dir, "config.toml");
+		const backup = `${path}${BACKUP_SUFFIX}`;
+		writeFileSync(path, original);
+		const run: HerdrRun = async (_file, args) => {
+			if (args[1] === "check") writeFileSync(path, concurrent);
+			return { ok: false, output: "unknown key" };
+		};
+		const result = await syncHerdrRows({
+			config: DEFAULT_CONFIG,
+			env: { [HERDR_CONFIG_ENV]: path },
+			run,
+		});
+		assert.equal(result.status, "error");
+		assert.match(result.reason ?? "", /not restored/u);
+		assert.match(result.reason ?? "", /edited/u, "the error names the concurrent edit as the reason");
+		assert.ok((result.reason ?? "").includes(backup), "the error points at the backup");
+		assert.equal(readFileSync(path, "utf8"), concurrent, "the concurrent edit is left alone");
+		assert.equal(readFileSync(backup, "utf8"), original, "the backup keeps the original");
 	});
 });

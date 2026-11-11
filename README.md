@@ -149,9 +149,18 @@ What it does, in order:
    comment) is refused with a notice and **nothing is written**, so another integration's
    row is never overwritten.
 4. Backs the file up to `<config>.pi-herdr-status.bak`, writes a temporary file next to it
-   and renames it, so a reader never sees a half-written config.
-5. Runs `herdr config check`. If it fails, the backup is restored and the error reported;
-   the reload never runs.
+   and renames it, so a reader never sees a half-written config. The backup is created only
+   when it does not exist yet: it keeps the version from before pi-herdr-status first touched
+   the file and a later sync never overwrites it. The temporary file inherits the mode of the
+   original before the rename, so a `664` config stays `664` instead of falling to the umask
+   (`644`).
+   Right before the rename the file is read again: if someone edited it while the sync was
+   running, **nothing is written** and the error says the file changed during the sync.
+5. Runs `herdr config check`. If it fails, the bytes read at the start of this sync — not the
+   backup — are written back and the error reported; the reload never runs. Before restoring,
+   the file is read again: if it no longer holds exactly what this sync wrote, someone edited
+   it meanwhile, so it is **left alone** and the error names the concurrent edit and the
+   backup path.
 6. Runs `herdr server reload-config`, so the sidebar picks up the change without
    restarting Herdr.
 

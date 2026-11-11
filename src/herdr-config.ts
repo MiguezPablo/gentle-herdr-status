@@ -16,15 +16,28 @@
  *   mano, sólo se migra cuando es exactamente la que dejó la instalación de T18 (el
  *   comentario `# pi-herdr-status:`, la tabla y una única clave `pi = …`); cualquier otra
  *   tabla es de otra persona y se niega sin escribir;
- * - la escritura es atómica (temporal + rename) y deja un backup `<config>.pi-herdr-status.bak`;
- * - después corre `herdr config check`; si falla, se restaura el backup y se informa; sólo
- *   si pasa se recarga con `herdr server reload-config`.
+ * - la escritura es atómica (temporal + rename), conserva el modo del original y deja un
+ *   backup `<config>.pi-herdr-status.bak` que se crea una sola vez y no se pisa nunca;
+ * - antes del rename se relee el archivo: si alguien lo editó mientras corría el sync no se
+ *   escribe nada y se informa el cambio concurrente;
+ * - después corre `herdr config check`; si falla, se restaura el original leído en este sync
+ *   (sólo si el archivo sigue siendo lo que este sync escribió) y se informa; sólo si pasa
+ *   se recarga con `herdr server reload-config`.
  *
  * La ruta y el binario salen del `env` inyectable, así que los tests nunca tocan el
  * config real del usuario ni ejecutan herdr: fs y runner también son inyectables.
  */
 import { execFile } from "node:child_process";
-import { copyFileSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import {
+	chmodSync,
+	copyFileSync,
+	existsSync,
+	readFileSync,
+	renameSync,
+	statSync,
+	unlinkSync,
+	writeFileSync,
+} from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -265,6 +278,12 @@ export type HerdrFs = {
 	copyFile(from: string, to: string): void;
 	rename(from: string, to: string): void;
 	remove(path: string): void;
+	/** Modo (permisos) del archivo, o undefined cuando no existe. */
+	mode(path: string): number | undefined;
+	/** Aplica un modo a un archivo (chmod), para que el temporal herede los permisos. */
+	chmod(path: string, mode: number): void;
+	/** true cuando el archivo existe; se usa para no pisar el backup que ya está. */
+	exists(path: string): boolean;
 };
 
 export const nodeHerdrFs: HerdrFs = {
@@ -287,6 +306,20 @@ export const nodeHerdrFs: HerdrFs = {
 	},
 	remove(path) {
 		unlinkSync(path);
+	},
+	mode(path) {
+		try {
+			return statSync(path).mode & 0o7777;
+		} catch (error) {
+			if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+			throw error;
+		}
+	},
+	chmod(path, mode) {
+		chmodSync(path, mode);
+	},
+	exists(path) {
+		return existsSync(path);
 	},
 };
 
@@ -327,9 +360,28 @@ function errorText(error: unknown): string {
 }
 
 /**
- * Escribe la fila en el config de Herdr con backup y escritura atómica, valida con
- * `herdr config check` (restaurando el backup si falla) y sólo entonces recarga Herdr.
- * Nunca crea el archivo, nunca escribe si la tabla es ajena y nunca tira.
+ * Escribe un archivo de trabajo con el modo del original: sin el chmod el temporal sale con
+ * el umask del proceso (0666 & ~umask) y el rename le cambia los permisos al config.
+ */
+function writeWithMode(fs: HerdrFs, path: string, content: string, mode: number | undefined): void {
+	fs.writeFile(path, content);
+	if (mode !== undefined) fs.chmod(path, mode);
+}
+
+/** Borra un temporal que puede no haberse llegado a crear. */
+function removeQuietly(fs: HerdrFs, path: string): void {
+	try {
+		fs.remove(path);
+	} catch {
+		// El temporal puede no haberse creado: no hay nada que limpiar.
+	}
+}
+
+/**
+ * Escribe la fila en el config de Herdr con backup único y escritura atómica, valida con
+ * `herdr config check` (restaurando el original de este sync si falla) y sólo entonces
+ * recarga Herdr. Nunca crea el archivo, nunca escribe si la tabla es ajena, nunca pisa una
+ * edición hecha mientras corría y nunca tira.
  */
 export async function syncHerdrRows(options: SyncOptions): Promise<SyncResult> {
 	const path = herdrConfigPath(options.env);
@@ -348,31 +400,65 @@ export async function syncHerdrRows(options: SyncOptions): Promise<SyncResult> {
 	if (plan.status === "denied") return { status: "denied", path, reason: plan.reason };
 	const backup = `${path}${BACKUP_SUFFIX}`;
 	const temporary = `${path}.${process.pid}.tmp`;
+	// R1: el modo del original se lee antes de escribir y se aplica al temporal.
+	let mode: number | undefined;
 	try {
-		fs.copyFile(path, backup);
-		fs.writeFile(temporary, plan.content);
+		mode = fs.mode(path);
+	} catch (error) {
+		return { status: "error", path, reason: `could not read the permissions of ${path} (${errorText(error)})` };
+	}
+	try {
+		writeWithMode(fs, temporary, plan.content, mode);
+		// R3: si alguien editó el config mientras corría el sync, no se escribe nada.
+		if (fs.readFile(path) !== current) {
+			removeQuietly(fs, temporary);
+			return {
+				status: "error",
+				path,
+				reason: `${path} changed during the sync; nothing was written`,
+			};
+		}
+		// R2: el backup guarda la versión previa a la primera intervención y no se pisa nunca.
+		if (!fs.exists(backup)) fs.copyFile(path, backup);
 		fs.rename(temporary, path);
 	} catch (error) {
-		try {
-			fs.remove(temporary);
-		} catch {
-			// El temporal puede no haberse creado: no hay nada que limpiar.
-		}
+		removeQuietly(fs, temporary);
 		return { status: "error", path, reason: `could not write ${path} (${errorText(error)})` };
 	}
 	const bin = herdrBin(options.env);
 	const check = await run(bin, ["config", "check"]);
 	if (!check.ok) {
+		const detail = check.output ? `: ${check.output}` : "";
+		// R3: sólo se restaura si el archivo sigue siendo exactamente lo que escribió este sync.
+		let after: string | undefined;
 		try {
-			fs.copyFile(backup, path);
+			after = fs.readFile(path);
 		} catch (error) {
 			return {
 				status: "error",
 				path,
-				reason: `herdr config check failed and the backup could not be restored (${errorText(error)})`,
+				reason: `herdr config check failed${detail} and ${path} could not be read again, so it was not restored (${errorText(error)})`,
 			};
 		}
-		const detail = check.output ? `: ${check.output}` : "";
+		if (after !== plan.content) {
+			return {
+				status: "error",
+				path,
+				reason: `herdr config check failed${detail}; ${path} was edited during the sync, so it was not restored (the original is kept in ${backup})`,
+			};
+		}
+		try {
+			// R2: la restauración usa los bytes leídos en este sync, no el backup.
+			writeWithMode(fs, temporary, current, mode);
+			fs.rename(temporary, path);
+		} catch (error) {
+			removeQuietly(fs, temporary);
+			return {
+				status: "error",
+				path,
+				reason: `herdr config check failed and the previous file could not be restored (${errorText(error)})`,
+			};
+		}
 		return { status: "error", path, reason: `herdr config check failed${detail}; the previous file was restored` };
 	}
 	const reload = await run(bin, ["server", "reload-config"]);
