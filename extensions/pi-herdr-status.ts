@@ -11,6 +11,7 @@
  */
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
+import { createDebug, type DebugWriter } from "../src/debug.ts";
 import {
 	MetadataPublisher,
 	PHASE_TOKEN,
@@ -34,6 +35,8 @@ export type ExtensionDeps = {
 	clearInterval?: PublisherOptions["clearInterval"];
 	/** Replaces gentle-pi's ODD phase registry (tests). */
 	readPhase?: PhaseReader;
+	/** Replaces the opt-in diagnostic writer (tests); by default it reads `PI_HERDR_STATUS_DEBUG`. */
+	debug?: DebugWriter;
 };
 
 type Ctx = { mode?: string; sessionManager?: { getSessionId?: () => string } } | undefined;
@@ -51,20 +54,25 @@ export function createExtension(deps: ExtensionDeps = {}) {
 		if (!herdr || env.GENTLE_PI_AGENTS_CHILD === "1") return;
 
 		const readPhase = deps.readPhase ?? readOddPhase;
+		// Off by default: with `PI_HERDR_STATUS_DEBUG` unset the writer does nothing.
+		const debug = deps.debug ?? createDebug({ env });
 
 		const tracker = new SubagentTracker();
 		let publisher: MetadataPublisher | undefined;
 		let sessionId: string | undefined;
 		let working = false;
 
+		type PhaseRead = { raw: unknown; token: string | null };
+
 		/** `$phase`: only while the agent works, read on the turn and tool events, never polled. */
-		const phase = (): string | null => {
-			if (!working) return null;
-			if (sessionId === undefined) return phaseToken(undefined);
+		const phase = (): PhaseRead => {
+			if (!working) return { raw: null, token: null };
+			if (sessionId === undefined) return { raw: null, token: phaseToken(undefined) };
 			try {
-				return phaseToken(readPhase(sessionId));
+				const raw = readPhase(sessionId);
+				return { raw: raw ?? null, token: phaseToken(raw) };
 			} catch {
-				return phaseToken(undefined);
+				return { raw: null, token: phaseToken(undefined) };
 			}
 		};
 
@@ -82,21 +90,40 @@ export function createExtension(deps: ExtensionDeps = {}) {
 		};
 
 		/** Keep the last known id when an event's ctx carries none, so the lookup still works. */
-		const syncSessionId = (ctx: unknown): void => {
-			sessionId = ctxSessionId(ctx) ?? sessionId;
+		const syncSessionId = (seen: string | undefined): void => {
+			sessionId = seen ?? sessionId;
 		};
 
-		const publish = () => {
+		/** Push both tokens in one report; returns what the phase lookup saw, for the diagnostic. */
+		const report = (): PhaseRead => {
+			const read = phase();
+			publisher?.set(TOKEN, tracker.label());
+			publisher?.set(PHASE_TOKEN, read.token);
+			return read;
+		};
+
+		/** Report, then append one diagnostic line for this event (nothing when the variable is unset). */
+		const publish = (
+			event: "session_start" | "agent_start" | "agent_end" | "tool_call" | "tool_result",
+			seen: { toolName?: string; ctxSessionId?: string } = {},
+		): void => {
 			if (!publisher) return;
-			publisher.set(TOKEN, tracker.label());
-			publisher.set(PHASE_TOKEN, phase());
+			const read = report();
+			debug({
+				event,
+				toolName: seen.toolName,
+				ctxSessionId: seen.ctxSessionId,
+				sessionId,
+				rawPhase: read.raw,
+				token: read.token,
+			});
 		};
 
 		const off = pi.events.on(STATUS_CHANNEL, (data: unknown) => {
 			if (!publisher || !record(data) || data.source !== "subagent") return;
 			if (typeof data.taskId !== "string" || typeof data.status !== "string") return;
 			tracker.status(data.taskId, data.status);
-			publish();
+			report();
 		});
 
 		pi.on("session_start", (_event, ctx) => {
@@ -104,7 +131,8 @@ export function createExtension(deps: ExtensionDeps = {}) {
 			if (context?.mode !== "tui") return;
 			tracker.reset();
 			working = false;
-			sessionId = ctxSessionId(context);
+			const seen = ctxSessionId(context);
+			sessionId = seen;
 			if (!publisher) {
 				publisher = new MetadataPublisher({
 					pane: herdr.pane,
@@ -114,38 +142,41 @@ export function createExtension(deps: ExtensionDeps = {}) {
 					clearInterval: deps.clearInterval,
 				});
 			}
-			publish();
+			publish("session_start", { ctxSessionId: seen });
 		});
 
 		pi.on("agent_start", (_event, ctx) => {
 			if (!publisher) return;
-			syncSessionId(ctx);
+			const seen = ctxSessionId(ctx);
+			syncSessionId(seen);
 			working = true;
-			publish();
+			publish("agent_start", { ctxSessionId: seen });
 		});
 
 		pi.on("agent_end", () => {
 			if (!publisher || !working) return;
 			working = false;
-			publish();
+			publish("agent_end");
 		});
 
 		pi.on("tool_call", (event, ctx) => {
 			if (!publisher) return;
 			const { toolCallId, toolName, input } = event as ToolEvent;
 			if (typeof toolCallId !== "string" || typeof toolName !== "string") return;
-			syncSessionId(ctx);
+			const seen = ctxSessionId(ctx);
+			syncSessionId(seen);
 			tracker.toolCall(toolCallId, toolName, input);
-			publish();
+			publish("tool_call", { toolName, ctxSessionId: seen });
 		});
 
 		pi.on("tool_result", (event, ctx) => {
 			if (!publisher) return;
 			const { toolCallId, toolName, details } = event as ToolEvent;
 			if (typeof toolCallId !== "string" || typeof toolName !== "string") return;
-			syncSessionId(ctx);
+			const seen = ctxSessionId(ctx);
+			syncSessionId(seen);
 			tracker.toolResult(toolCallId, toolName, details);
-			publish();
+			publish("tool_result", { toolName, ctxSessionId: seen });
 		});
 
 		pi.on("session_shutdown", async () => {

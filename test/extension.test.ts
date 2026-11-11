@@ -1,11 +1,30 @@
 import assert from "node:assert/strict";
+import { mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { test } from "node:test";
 
 import { createExtension } from "../extensions/pi-herdr-status.ts";
+import { DEBUG_ENV } from "../src/debug.ts";
 import { PHASE_TOKEN, REFRESH_MS, TOKEN, TTL_MS, type HerdrRequest } from "../src/herdr.ts";
 
 type Handler = (event: unknown, ctx: unknown) => unknown;
 type PhaseReader = (sessionId: string) => unknown;
+
+/** gentle-pi's registry key; the diagnostic reads it through the same symbol. */
+const REGISTRY = Symbol.for("gentle-pi.odd-phase-registry");
+
+async function withRegistry<T>(value: unknown, run: () => T | Promise<T>): Promise<T> {
+	const holder = globalThis as unknown as Record<symbol, unknown>;
+	const saved = holder[REGISTRY];
+	holder[REGISTRY] = value;
+	try {
+		return await run();
+	} finally {
+		if (saved === undefined) delete holder[REGISTRY];
+		else holder[REGISTRY] = saved;
+	}
+}
 
 const HERDR_ENV = { HERDR_ENV: "1", HERDR_PANE_ID: "w1:p1", HERDR_SOCKET_PATH: "/tmp/herdr.sock" };
 const TUI_CTX = { mode: "tui", sessionManager: { getSessionId: () => "s1" } };
@@ -262,6 +281,66 @@ test("opening UI or asking the user never publishes anything", async () => {
 	assert.equal(sent.length, before);
 	assert.equal(last()!.tokens[PHASE_TOKEN], "[implementing]", "a prompt does not change the phase");
 	assert.ok(sent.every((request) => request.method === "pane.report_metadata"), "never pane.report_agent");
+});
+
+test("R5: with PI_HERDR_STATUS_DEBUG unset the extension writes no diagnostic file", async () => {
+	const dir = mkdtempSync(join(tmpdir(), "pi-herdr-status-debug-"));
+	try {
+		const { fire, sent } = load();
+		await fire("session_start", { reason: "startup" });
+		await fire("agent_start", { type: "agent_start" });
+		await fire("tool_call", { toolCallId: "c1", toolName: "bash", input: { command: "ls" } });
+		await fire("tool_result", { toolCallId: "c1", toolName: "bash", details: {} });
+		await fire("agent_end", { type: "agent_end", messages: [] });
+		assert.ok(sent.length > 0, "the extension still publishes normally");
+		assert.deepEqual(readdirSync(dir), [], "nothing is written when the variable is unset");
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
+});
+
+test("R5: a set PI_HERDR_STATUS_DEBUG logs one line per publishing event", async () => {
+	const dir = mkdtempSync(join(tmpdir(), "pi-herdr-status-debug-"));
+	const file = join(dir, "events.jsonl");
+	const registry = {
+		phases: new Map([["s1", { phase: "checking", source: "gentle-pi" }]]),
+		get: (sessionId: string) => (sessionId === "s1" ? "checking" : undefined),
+	};
+	try {
+		await withRegistry(registry, async () => {
+			const { fire, sent } = load({ ...HERDR_ENV, [DEBUG_ENV]: file });
+			await fire("session_start", { reason: "startup" });
+			await fire("agent_start", { type: "agent_start" });
+			await fire("tool_result", { toolCallId: "c1", toolName: "gentle_odd_phase", details: {} });
+			await fire("tool_call", { toolCallId: "c2", toolName: "bash", input: { command: "ls" } });
+			await fire("agent_end", { type: "agent_end", messages: [] });
+			assert.deepEqual(sent.at(-1)!.params.tokens, { [TOKEN]: null, [PHASE_TOKEN]: null }, "publishing is unchanged");
+		});
+		const logged = readFileSync(file, "utf8").trim().split("\n").map((line) => JSON.parse(line) as Record<string, unknown>);
+		assert.deepEqual(logged.map((entry) => entry.event), [
+			"session_start", "agent_start", "tool_result", "tool_call", "agent_end",
+		], "one line per publishing event");
+		const [start, turn, result, call, end] = logged;
+		assert.equal(start.ctxSessionId, "s1");
+		assert.equal(start.sessionId, "s1");
+		assert.equal(start.registryType, "object");
+		assert.deepEqual(start.registrySessions, [{ id: "s1", phase: "checking", source: "gentle-pi" }]);
+		assert.equal(start.rawPhase, null, "nothing is read while idle");
+		assert.equal(start.token, null);
+		assert.equal(turn.rawPhase, "checking");
+		assert.equal(turn.token, "[checking]");
+		assert.equal(result.toolName, "gentle_odd_phase");
+		assert.equal(result.ctxSessionId, "s1");
+		assert.equal(result.sessionId, "s1");
+		assert.equal(result.rawPhase, "checking");
+		assert.equal(result.token, "[checking]", "the token that actually went to Herdr");
+		assert.equal(call.toolName, "bash");
+		assert.equal(call.token, "[checking]");
+		assert.equal(end.rawPhase, null);
+		assert.equal(end.token, null, "the token is cleared at the end of the turn");
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
 });
 
 test("shutdown clears the shown token and stops listening to the bus", async () => {

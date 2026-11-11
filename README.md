@@ -77,12 +77,33 @@ Apply it with `herdr server reload-config`. A row whose only token is unset is h
   start (`agent_start`), `tool_call` and `tool_result` (gentle-pi's own phase reports are
   tool calls), and clears the token on `agent_end`. A missing registry, a registry
   without `get`, one that throws, or a value outside gentle-pi's phase list all fall
-  back to `[working]`; nothing is published while idle.
+  back to `[working]`; nothing is published while idle. Since that registry is an
+  internal, `PI_HERDR_STATUS_DEBUG` logs what each event saw (see [Debugging](#debugging)).
 - Both tokens share source `pi-herdr-status` and one `seq` stream (Herdr orders reports
   per source by `seq`), and every report carries both tokens.
 - Both tokens carry a 90 s TTL and are refreshed every 30 s while shown, so they expire
   even if Pi dies. They are cleared on session start and shutdown.
 - Source `pi-herdr-status`, agent `pi`.
+
+## Debugging
+
+If the sidebar shows a phase it should not, point `PI_HERDR_STATUS_DEBUG` at a file
+before starting Pi:
+
+```bash
+PI_HERDR_STATUS_DEBUG=/tmp/pi-herdr-status.jsonl pi
+```
+
+Every event that publishes the tokens (`session_start`, `agent_start`, `agent_end`,
+`tool_call`, `tool_result`) then appends one JSON line with the event name and tool name,
+the session id that event's `ctx` reported, the id the phase lookup actually used, the
+`typeof` of the ODD registry this process sees, the sessions that registry tracks (with
+their phase and source), the raw phase read and the token published. That tells apart a
+session-id mismatch, a registry loaded by another module instance, and a phase that was
+never reported.
+
+The variable is unset by default and then nothing is written. Write failures are ignored,
+so the diagnostic never affects the sidebar.
 
 ## Development
 
