@@ -10,6 +10,8 @@ export const PHASE_TOKEN = "phase";
 export const NAME_TOKEN = "name";
 /** Rendered in Herdr sidebar rows as `$jobs`: the running gentle-pi jobs, in their own row. */
 export const JOBS_TOKEN = "jobs";
+/** Rendered in Herdr sidebar rows as `$changes`: uncommitted lines, opt-in (S12). */
+export const CHANGES_TOKEN = "changes";
 /** Fixed `$name` value: the panel is called `gentle`, no colors, so it never depends on the theme. */
 export const PANEL_NAME = "gentle";
 /** Pane agent the token applies to (Herdr's official Pi integration reports `pi`). */

@@ -10,6 +10,15 @@ gentle [exploring]
 ⏵ CI for PR 1834
 ```
 
+With the opt-in `$changes` token the row can also show the uncommitted lines of the
+session's repo, next to the name:
+
+```
+gentle [exploring] +120 -40
+↳ explore (+1)
+⏵ CI for PR 1834
+```
+
 - `$name` is the panel name, the fixed word `gentle` (Herdr rows accept only tokens, never
   literal text). It is published from session start, stays while the agent is idle and is
   cleared on shutdown.
@@ -31,6 +40,11 @@ gentle [exploring]
   `⏵ CI for PR 1834`, `⏵ logs (+1)`. A job keeps
   running without a turn, so this row is published while the agent is idle too; it is
   cleared when no job runs, on session start and on shutdown.
+- `$changes` is opt-in: only with `PI_HERDR_STATUS_CHANGES=1` it holds the lines the
+  session's repo has without committing, as `+<added> -<deleted>` (e.g. `+120 -40`,
+  `+5 -0`), so it reads next to the name. Without that exact value nothing is computed,
+  git is never run and the token stays unset. See
+  [Configuration](#configuration).
 
 ## Configuration
 
@@ -71,6 +85,41 @@ still normalized, the token still clears when the agent goes idle.
 
 Opt-in diagnostic for `$phase`; see [Debugging](#debugging).
 
+### `PI_HERDR_STATUS_CHANGES`
+
+Only the exact value `1` turns the `$changes` token on; unset, empty or any other value
+(including `0` or `true`) leaves it out and never runs git. It is off by default because a
+number that changes all the time is noise unless you ask for it.
+
+```bash
+PI_HERDR_STATUS_CHANGES=1 pi
+```
+
+What it counts, always against `HEAD` (`git diff --numstat HEAD`, so staged and unstaged
+changes together) plus the lines of the untracked files that git does not ignore
+(`git ls-files --others --exclude-standard`). Binary files are skipped. The token is
+`+<added> -<deleted>` with an ASCII hyphen and shows a zero part (`+5 -0`); when nothing
+changed it disappears. A repo without commits is compared against git's empty tree, and
+outside a git repo, with git missing, on error or after a 2 s timeout the token is
+cleared instead of keeping the previous value.
+
+When it recalculates, with no timer of its own: on `session_start`, `agent_start`, every
+`tool_result` (any tool, so edit/write/bash and the end of a subagent are covered), the
+gentle-pi jobs event and `agent_end`. The measurement is asynchronous (`execFile`, no
+shell, never blocking events): at most one runs at a time, and events that arrive during
+one collapse into exactly one more measurement. It is published in the same report as the
+other tokens (same `seq`, source and TTL) and also while the agent is idle, like `$jobs`.
+
+The limit is deliberate: it is event-driven, so changes made outside Pi (another
+terminal, an editor, a background job that is not a gentle-pi job) are reflected only on
+the next Pi event. Nothing polls the repo.
+
+To show it, add the token to the row with the name:
+
+```toml
+pi = [["state_icon", "machine", "workspace", "tab"], ["$name", "$phase", "$changes"], ["$subagent"], ["$jobs"]]
+```
+
 ## What it does not do
 
 This package only publishes presentation metadata (`pane.report_metadata`). It never:
@@ -79,7 +128,7 @@ This package only publishes presentation metadata (`pane.report_metadata`). It n
 - sends desktop notifications or sounds: Herdr decides them from its `[ui.toast]` and
   `[ui.sound]` settings, so turning them off in Herdr turns them off everywhere;
 - reacts to UI prompts: opening a subagent viewer or a menu changes nothing;
-- shows change counts, branches or colors.
+- shows branches or colors. Change counts only appear with the opt-in `$changes` token.
 
 ## Requirements
 
@@ -112,9 +161,11 @@ pi = [["state_icon", "machine", "workspace", "tab"], ["$name", "$phase"], ["$sub
 ```
 
 `["$name", "$phase"]` is the `gentle [exploring]` line: the panel name followed by the
-phase. `$subagent` and `$jobs` live in rows of their own, so each disappears (row and all)
-when its token is unset. Apply it with `herdr server reload-config`. A row whose only token
-is unset is hidden.
+phase. With `PI_HERDR_STATUS_CHANGES=1`, add `$changes` to that row
+(`["$name", "$phase", "$changes"]`) to read `gentle [exploring] +120 -40`. `$subagent`
+and `$jobs` live in rows of their own, so each disappears (row and all) when its token is
+unset. Apply it with `herdr server reload-config`. A row whose only token is unset is
+hidden.
 
 ## How it works
 
@@ -157,6 +208,13 @@ is unset is hidden.
   own `env` once, and then `phaseToken(value, style)` renders `<emoji> <phase>` instead
   of `[<phase>]`. The default argument is still the bracketed form, so no other token and
   no other behaviour changes.
+- `$changes` is opt-in too: `PI_HERDR_STATUS_CHANGES=1` (read once from the same `env`)
+  creates a counter that measures the session's `cwd` on the events the extension already
+  handles (`session_start`, `agent_start`, every `tool_result`, the jobs event and
+  `agent_end`) through an injected git runner (`execFile`, no shell), at most one
+  measurement in flight with a single queued re-measurement, a 2 s cap, and `null` on any
+  error. It has no timer and no poll of its own; its value travels in the same report and
+  is cleared on `session_start` and on shutdown.
 - All tokens share source `pi-herdr-status` and one `seq` stream (Herdr orders reports
   per source by `seq`), and every report carries all of them.
 - Every token carries a 90 s TTL and is refreshed every 30 s while shown, so they expire

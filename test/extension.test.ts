@@ -8,6 +8,7 @@ import { createExtension } from "../extensions/pi-herdr-status.ts";
 import { DEBUG_ENV } from "../src/debug.ts";
 import { JOBS_SIDEBAR_EVENT } from "../src/jobs.ts";
 import {
+	CHANGES_TOKEN,
 	JOBS_TOKEN,
 	NAME_TOKEN,
 	PANEL_NAME,
@@ -17,6 +18,7 @@ import {
 	TTL_MS,
 	type HerdrRequest,
 } from "../src/herdr.ts";
+import type { GitRun } from "../src/changes.ts";
 
 type Handler = (event: unknown, ctx: unknown) => unknown;
 type PhaseReader = (sessionId: string) => unknown;
@@ -39,16 +41,20 @@ async function withRegistry<T>(value: unknown, run: () => T | Promise<T>): Promi
 const HERDR_ENV = { HERDR_ENV: "1", HERDR_PANE_ID: "w1:p1", HERDR_SOCKET_PATH: "/tmp/herdr.sock" };
 const TUI_CTX = { mode: "tui", sessionManager: { getSessionId: () => "s1" } };
 
-/** Todo reporte lleva los cuatro tokens; `$name` vale `gentle` mientras la sesión vive. */
+/** Todo reporte lleva los cinco tokens; `$name` vale `gentle` mientras la sesión vive. */
 const tokensOf = (overrides: Record<string, string | null> = {}) => ({
 	[NAME_TOKEN]: PANEL_NAME,
 	[TOKEN]: null,
 	[PHASE_TOKEN]: null,
 	[JOBS_TOKEN]: null,
+	[CHANGES_TOKEN]: null,
 	...overrides,
 });
 
-function load(env: Record<string, string | undefined> = HERDR_ENV, deps: { readPhase?: PhaseReader } = {}) {
+function load(
+	env: Record<string, string | undefined> = HERDR_ENV,
+	deps: { readPhase?: PhaseReader; runGit?: GitRun } = {},
+) {
 	const handlers = new Map<string, Handler>();
 	const bus = new Map<string, (data: unknown) => void>();
 	const sent: HerdrRequest[] = [];
@@ -64,6 +70,7 @@ function load(env: Record<string, string | undefined> = HERDR_ENV, deps: { readP
 		env,
 		send: async (request) => { sent.push(request); return true; },
 		readPhase: deps.readPhase,
+		runGit: deps.runGit,
 		setInterval: (fn, ms) => { const id = nextTimer++; timers.set(id, { fn, ms }); return id; },
 		clearInterval: (id) => { timers.delete(id as number); },
 	})(pi as never);
@@ -91,6 +98,7 @@ function load(env: Record<string, string | undefined> = HERDR_ENV, deps: { readP
 		phases: () => sent.map((request) => request.params.tokens[PHASE_TOKEN] ?? null),
 		names: () => sent.map((request) => request.params.tokens[NAME_TOKEN] ?? null),
 		jobs: () => sent.map((request) => request.params.tokens[JOBS_TOKEN] ?? null),
+		changes: () => sent.map((request) => request.params.tokens[CHANGES_TOKEN] ?? null),
 		last: () => sent.at(-1)?.params,
 		refresh: () => tick(REFRESH_MS),
 		refreshTimers: () => timerCount(REFRESH_MS),
@@ -428,6 +436,7 @@ test("S9: $jobs is cleared on session start and on shutdown", async () => {
 		[TOKEN]: null,
 		[PHASE_TOKEN]: null,
 		[JOBS_TOKEN]: null,
+		[CHANGES_TOKEN]: null,
 	}, "shutdown clears every token");
 });
 
@@ -500,4 +509,159 @@ test("PRESERVE: $phase stays clean while idle and $subagent is untouched", async
 		details: { gentleAgents: { taskId: "t1", agent: "explore", status: "completed" } },
 	});
 	assert.equal(tokens().at(-1), null, "the subagent clears exactly as before");
+});
+
+/** git falso de `$changes`: HEAD fijo, el numstat y los untracked que pida el test. */
+function fakeChangesGit(numstat = "", untracked = "") {
+	const calls: string[] = [];
+	const run: GitRun = async (args) => {
+		const key = args.join(" ");
+		calls.push(key);
+		if (key === "rev-parse --verify --quiet HEAD") return "abc123\n";
+		if (key.startsWith("diff --numstat")) return numstat;
+		if (key === "ls-files --others --exclude-standard") return untracked;
+		throw new Error(`unexpected git call: ${key}`);
+	};
+	return { run, calls };
+}
+
+const CHANGES_ON = { ...HERDR_ENV, PI_HERDR_STATUS_CHANGES: "1" };
+/** Cuántas mediciones arrancaron: una por cada lectura de HEAD. */
+const measurements = (calls: string[]) => calls.filter((call) => call === "rev-parse --verify --quiet HEAD").length;
+
+test("S12: without PI_HERDR_STATUS_CHANGES nothing runs git and $changes is always null", async () => {
+	for (const value of [undefined, "0", "true", " 1", "1 "]) {
+		const env = { ...HERDR_ENV } as Record<string, string | undefined>;
+		env.PI_HERDR_STATUS_CHANGES = value;
+		const git = fakeChangesGit("9\t9\ta.ts\n");
+		const { fire, emit, changes } = load(env, { runGit: git.run });
+		await fire("session_start", { reason: "startup" });
+		await fire("agent_start", { type: "agent_start" });
+		await fire("tool_result", { toolCallId: "c1", toolName: "bash", details: {} });
+		await emit(JOBS_SIDEBAR_EVENT, jobsSnapshot("s1", []));
+		await fire("agent_end", { type: "agent_end", messages: [] });
+		assert.deepEqual(git.calls, [], `${JSON.stringify(value)} never runs git`);
+		assert.deepEqual(changes(), changes().map(() => null), "the token is published as null");
+		assert.ok(changes().length > 0, "the token still travels in every report");
+	}
+});
+
+test("S12: PI_HERDR_STATUS_CHANGES=1 publishes +added -deleted in the same report as the other tokens", async () => {
+	const git = fakeChangesGit("100\t40\ta.ts\n20\t0\tb.ts\n");
+	const { fire, last, changes, names, timerMs } = load(CHANGES_ON, { runGit: git.run });
+	await fire("session_start", { reason: "startup" });
+	assert.deepEqual(git.calls, [
+		"rev-parse --verify --quiet HEAD",
+		"diff --numstat abc123",
+		"ls-files --others --exclude-standard",
+	], "one measurement: HEAD, numstat against it, untracked list");
+	assert.equal(changes().at(-1), "+120 -40");
+	assert.deepEqual(last()!.tokens, tokensOf({ [CHANGES_TOKEN]: "+120 -40" }), "one report carries every token");
+	assert.equal(last()!.ttl_ms, TTL_MS, "it rides the shared TTL");
+	assert.equal(names().at(-1), PANEL_NAME, "$name is untouched");
+	assert.deepEqual(timerMs(), [REFRESH_MS], "no timer of its own, only the publisher's refresh");
+});
+
+test("S12: each trigger re-measures, and a tool call does not", async () => {
+	const git = fakeChangesGit("7\t2\ta.ts\n");
+	const { fire, emit } = load(CHANGES_ON, { runGit: git.run });
+	await fire("session_start", { reason: "startup" });
+	assert.equal(measurements(git.calls), 1, "session_start measures");
+	await fire("agent_start", { type: "agent_start" });
+	assert.equal(measurements(git.calls), 2, "agent_start measures");
+	await fire("tool_call", { toolCallId: "c1", toolName: "bash", input: { command: "ls" } });
+	assert.equal(measurements(git.calls), 2, "a tool call is not a trigger");
+	await fire("tool_result", { toolCallId: "c1", toolName: "bash", details: {} });
+	assert.equal(measurements(git.calls), 3, "every tool result measures");
+	await emit(JOBS_SIDEBAR_EVENT, jobsSnapshot("s1", []));
+	assert.equal(measurements(git.calls), 4, "a jobs event measures");
+	await fire("agent_end", { type: "agent_end", messages: [] });
+	assert.equal(measurements(git.calls), 5, "agent_end measures");
+});
+
+test("S12: events during a measurement collapse into exactly one more", async () => {
+	let release: (() => void) | undefined;
+	let waitOnce = true;
+	const calls: string[] = [];
+	const run: GitRun = async (args) => {
+		const key = args.join(" ");
+		calls.push(key);
+		if (key === "rev-parse --verify --quiet HEAD") return "abc123\n";
+		if (key.startsWith("diff --numstat")) {
+			if (waitOnce) {
+				waitOnce = false;
+				await new Promise<void>((resolve) => { release = resolve; });
+			}
+			return "7\t2\ta.ts\n";
+		}
+		if (key === "ls-files --others --exclude-standard") return "";
+		throw new Error(`unexpected git call: ${key}`);
+	};
+	const { fire, emit, changes } = load(CHANGES_ON, { runGit: run });
+	await fire("session_start", { reason: "startup" });
+	assert.equal(measurements(calls), 1);
+	assert.equal(changes().at(-1), null, "nothing is published until the measurement finishes");
+	await fire("agent_start", { type: "agent_start" });
+	await fire("tool_result", { toolCallId: "c1", toolName: "bash", details: {} });
+	await emit(JOBS_SIDEBAR_EVENT, jobsSnapshot("s1", []));
+	assert.equal(measurements(calls), 1, "no second measurement while one is in flight");
+	release?.();
+	await new Promise((resolve) => setImmediate(resolve));
+	assert.equal(measurements(calls), 2, "the queued events run one measurement, not three");
+	assert.equal(changes().at(-1), "+7 -2");
+});
+
+test("S12: a git error clears the token even after a shown value", async () => {
+	let fail = false;
+	const git = fakeChangesGit("7\t2\ta.ts\n");
+	const run: GitRun = async (args, cwd) => {
+		if (fail && args[0] === "diff") throw new Error("fatal: not a git repository");
+		return git.run(args, cwd);
+	};
+	const { fire, changes } = load(CHANGES_ON, { runGit: run });
+	await fire("session_start", { reason: "startup" });
+	assert.equal(changes().at(-1), "+7 -2");
+	fail = true;
+	await fire("agent_start", { type: "agent_start" });
+	assert.equal(changes().at(-1), null, "an error never leaves the previous value");
+});
+
+test("S12: $changes stays published while idle, like $jobs", async () => {
+	const git = fakeChangesGit("3\t1\ta.ts\n");
+	const { fire, last, changes, phases } = load(CHANGES_ON, { runGit: git.run });
+	await fire("session_start", { reason: "startup" });
+	await fire("agent_start", { type: "agent_start" });
+	await fire("agent_end", { type: "agent_end", messages: [] });
+	assert.equal(changes().at(-1), "+3 -1", "the count survives the end of the turn");
+	assert.equal(last()!.tokens[CHANGES_TOKEN], "+3 -1");
+	assert.equal(phases().at(-1), null, "the phase still clears when idle");
+});
+
+test("S12: shutdown stops measuring and clears $changes", async () => {
+	const git = fakeChangesGit("3\t1\ta.ts\n");
+	const { fire, last, changes } = load(CHANGES_ON, { runGit: git.run });
+	await fire("session_start", { reason: "startup" });
+	await fire("agent_start", { type: "agent_start" });
+	assert.equal(changes().at(-1), "+3 -1");
+	await fire("session_shutdown", { reason: "quit" });
+	assert.equal(changes().at(-1), null, "shutdown leaves no count behind");
+	assert.deepEqual(last()!.tokens, tokensOf({ [NAME_TOKEN]: null }));
+	const before = git.calls.length;
+	await fire("agent_start", { type: "agent_start" });
+	assert.equal(git.calls.length, before, "nothing measures after shutdown");
+});
+
+test("PRESERVE: with $changes on, $phase, $subagent, $jobs and $name keep their values", async () => {
+	const git = fakeChangesGit("5\t0\ta.ts\n");
+	const { fire, emit, last } = load(CHANGES_ON, { runGit: git.run, readPhase: () => "implementing" });
+	await fire("session_start", { reason: "startup" });
+	await fire("agent_start", { type: "agent_start" });
+	await fire("tool_call", { toolCallId: "c1", toolName: "subagent_run", input: { agent: "gentle-ai-explore", task: "x" } });
+	await emit(JOBS_SIDEBAR_EVENT, jobsSnapshot("s1", [job("j1", "CI for PR 1834", 10)]));
+	assert.deepEqual(last()!.tokens, tokensOf({
+		[CHANGES_TOKEN]: "+5 -0",
+		[TOKEN]: "↳ explore",
+		[PHASE_TOKEN]: "[implementing]",
+		[JOBS_TOKEN]: "⏵ CI for PR 1834",
+	}), "the other four tokens read exactly as before");
 });
