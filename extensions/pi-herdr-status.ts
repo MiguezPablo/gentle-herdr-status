@@ -9,9 +9,13 @@
  * Everything is configurable in a JSON file (`src/config.ts`) and, from the TUI, with
  * `/herdr-status`: the phase style (`[exploring]` or `🔍 exploring`), the subagent style
  * (`↳ explore` or `🧭 explore`), whether `$changes` is measured, whether the `$subagent`
- * and `$jobs` tokens are published at all, and the panel name. Saving the panel writes the
- * file and applies it at once: the extension rereads the config and republishes every
- * token, without waiting for the next Pi event. Escape cancels and writes nothing.
+ * and `$jobs` tokens are published at all, the panel name and whether the managed row in
+ * Herdr's own `config.toml` carries colors. Saving the panel writes the file and applies
+ * it at once: the extension rereads the config and republishes every token, without
+ * waiting for the next Pi event. Escape cancels and writes nothing. The "Sync Herdr rows"
+ * action saves the same draft and then writes the `pi` row inside a
+ * `# BEGIN pi-herdr-status …` block of Herdr's config (`src/herdr-config.ts`), checking and
+ * reloading Herdr; a row written by someone else is never touched.
  *
  * The environment still wins over the file for the two variables that existed before it
  * (`PI_HERDR_STATUS_STYLE`, `PI_HERDR_STATUS_CHANGES`); the panel shows those options as
@@ -45,6 +49,7 @@ import {
 	type HerdrStatusConfig,
 } from "../src/config.ts";
 import { createDebug, type DebugWriter } from "../src/debug.ts";
+import { syncHerdrRows, type HerdrFs, type HerdrRun } from "../src/herdr-config.ts";
 import {
 	CHANGES_TOKEN,
 	JOBS_TOKEN,
@@ -76,6 +81,10 @@ export type ExtensionDeps = {
 	debug?: DebugWriter;
 	/** Replaces the git runner of the opt-in `$changes` counter (tests); by default it runs git. */
 	runGit?: GitRun;
+	/** Replaces the filesystem of the Herdr config sync (tests); by default it uses the real one. */
+	herdrFs?: HerdrFs;
+	/** Replaces the `herdr` runner of the config sync (tests); by default it runs the binary. */
+	herdrRun?: HerdrRun;
 };
 
 type Ctx = {
@@ -87,6 +96,8 @@ type ToolEvent = { toolCallId?: unknown; toolName?: unknown; input?: unknown; de
 
 /** Fila de acción del panel: no es una opción, escribe el archivo y cierra. */
 const SAVE_LABEL = "Save changes";
+/** Fila de acción que guarda la config y escribe la fila `pi` en el config de Herdr. */
+const SYNC_LABEL = "Sync Herdr rows";
 /** ctrl+s guarda desde cualquier fila, sin tener que llegar hasta `Save changes`. */
 const SAVE_KEY = "\u0013";
 const BACKSPACE_KEYS: ReadonlySet<string> = new Set(["\u007f", "\b"]);
@@ -104,9 +115,12 @@ type PanelOptions = {
 	theme: PanelTheme;
 	keybindings: PanelKeys;
 	tui: PanelTui;
-	/** Cierra el panel: la config guardada, o undefined cuando se cancela. */
-	done: (saved: HerdrStatusConfig | undefined) => void;
+	/** Cierra el panel: la config guardada con la acción elegida, o undefined cuando se cancela. */
+	done: (result: PanelResult) => void;
 };
+
+/** Lo que el panel entrega: guardar sólo la config, o guardarla y sincronizar la fila de Herdr. */
+export type PanelResult = { action: "save" | "sync"; config: HerdrStatusConfig } | undefined;
 
 function record(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -158,6 +172,9 @@ class SettingsPanel {
 		const saveSelected = this.cursor === rows.length;
 		const save = clip(`${saveSelected ? "› " : "  "}${SAVE_LABEL}`, width);
 		lines.push(saveSelected ? theme.fg("accent", save) : save);
+		const syncSelected = this.cursor === rows.length + 1;
+		const sync = clip(`${syncSelected ? "› " : "  "}${SYNC_LABEL}`, width);
+		lines.push(syncSelected ? theme.fg("accent", sync) : sync);
 		lines.push(theme.fg("dim", clip("↑↓ move · Enter change · ctrl+s save · Esc cancel", width)));
 		if (this.editing !== undefined) {
 			lines.push(theme.fg("dim", clip("Panel name: Enter keep · Esc discard", width)));
@@ -173,7 +190,7 @@ class SettingsPanel {
 			return;
 		}
 		if (data === SAVE_KEY) {
-			this.deps.done(this.config);
+			this.deps.done({ action: "save", config: this.config });
 			return;
 		}
 		if (this.deps.keybindings.matches(data, "tui.select.cancel")) {
@@ -192,9 +209,9 @@ class SettingsPanel {
 
 	invalidate(): void {}
 
-	/** Una fila por opción más la de guardar. */
+	/** Una fila por opción más las de guardar y sincronizar. */
 	private get rowCount(): number {
-		return OPTION_IDS.length + 1;
+		return OPTION_IDS.length + 2;
 	}
 
 	private move(delta: number): void {
@@ -204,7 +221,7 @@ class SettingsPanel {
 	private confirm(): void {
 		const rows = optionRows(this.config, this.deps.forced);
 		if (this.cursor >= rows.length) {
-			this.deps.done(this.config);
+			this.deps.done({ action: this.cursor === rows.length ? "save" : "sync", config: this.config });
 			return;
 		}
 		const row = rows[this.cursor];
@@ -372,7 +389,7 @@ export function createExtension(deps: ExtensionDeps = {}) {
 				);
 				return;
 			}
-			const saved = await ctx.ui.custom<HerdrStatusConfig | undefined>((tui, theme, keybindings, done) =>
+			const result = await ctx.ui.custom<PanelResult>((tui, theme, keybindings, done) =>
 				new SettingsPanel({
 					config: stored,
 					forced: effective.forced,
@@ -382,9 +399,9 @@ export function createExtension(deps: ExtensionDeps = {}) {
 					done,
 				}));
 			// Esc: se cierra sin escribir nada.
-			if (saved === undefined) return;
+			if (result === undefined) return;
 			try {
-				saveConfig(path, saved);
+				saveConfig(path, result.config);
 			} catch (error) {
 				ctx.ui.notify(`Herdr status: could not save ${path} (${reason(error)})`, "error");
 				return;
@@ -393,11 +410,28 @@ export function createExtension(deps: ExtensionDeps = {}) {
 			applySettings();
 			report();
 			refreshChanges(undefined);
-			ctx.ui.notify(`Herdr status: saved to ${path}`, "info");
+			if (result.action === "save") {
+				ctx.ui.notify(`Herdr status: saved to ${path}`, "info");
+				return;
+			}
+			// Sync: la fila de Herdr se arma con la config en efecto recién guardada.
+			const sync = await syncHerdrRows({
+				config: settings,
+				env,
+				fs: deps.herdrFs,
+				run: deps.herdrRun,
+			});
+			if (sync.status === "ok") {
+				ctx.ui.notify(`Herdr status: Herdr rows synced in ${sync.path}`, "info");
+			} else if (sync.status === "denied") {
+				ctx.ui.notify(`Herdr status: Herdr rows not synced, ${sync.reason}`, "warning");
+			} else {
+				ctx.ui.notify(`Herdr status: could not sync Herdr rows (${sync.reason})`, "error");
+			}
 		};
 
 		pi.registerCommand("herdr-status", {
-			description: "pi-herdr-status settings: phase/subagent style, visible tokens and panel name",
+			description: "pi-herdr-status settings: phase/subagent style, visible tokens, panel name and Herdr rows",
 			handler: async (_args: string, ctx: ExtensionCommandContext) => {
 				await openPanel(ctx);
 			},

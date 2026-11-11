@@ -30,13 +30,14 @@ export const CONFIG_DIR = "pi-herdr-status";
 /** Nombre del archivo de config dentro de ese directorio. */
 export const CONFIG_FILE = "config.json";
 
-/** Las seis opciones, en el orden en que el panel las muestra. */
+/** Las siete opciones, en el orden en que el panel las muestra. */
 export const OPTION_IDS = [
 	"phaseStyle",
 	"subagentStyle",
 	"changes",
 	"showSubagent",
 	"showJobs",
+	"colors",
 	"name",
 ] as const;
 
@@ -50,6 +51,8 @@ export interface HerdrStatusConfig {
 	name: string;
 	showSubagent: boolean;
 	showJobs: boolean;
+	/** Celdas con estilo y colores en la fila gestionada del config de Herdr (S16). */
+	colors: boolean;
 }
 
 /**
@@ -63,6 +66,7 @@ export const DEFAULT_CONFIG: HerdrStatusConfig = {
 	name: PANEL_NAME,
 	showSubagent: true,
 	showJobs: true,
+	colors: false,
 };
 
 /** Opciones que una variable de entorno puede fijar; el resto sólo las edita el panel. */
@@ -87,6 +91,7 @@ const OPTION_LABELS: Record<OptionId, string> = {
 	changes: "Changes token",
 	showSubagent: "Subagent token",
 	showJobs: "Jobs token",
+	colors: "Sidebar colors",
 	name: "Panel name",
 };
 
@@ -131,6 +136,7 @@ export function normalizeConfig(raw: unknown): HerdrStatusConfig {
 		name: readName(source.name) ?? DEFAULT_CONFIG.name,
 		showSubagent: typeof source.showSubagent === "boolean" ? source.showSubagent : DEFAULT_CONFIG.showSubagent,
 		showJobs: typeof source.showJobs === "boolean" ? source.showJobs : DEFAULT_CONFIG.showJobs,
+		colors: typeof source.colors === "boolean" ? source.colors : DEFAULT_CONFIG.colors,
 	};
 }
 
@@ -247,6 +253,7 @@ export function describeConfig(config: HerdrStatusConfig): string {
 		`changes ${config.changes ? "on" : "off"}`,
 		`$subagent ${config.showSubagent ? "on" : "off"}`,
 		`$jobs ${config.showJobs ? "on" : "off"}`,
+		`colors ${config.colors ? "on" : "off"}`,
 		`name ${config.name}`,
 	].join(", ");
 }

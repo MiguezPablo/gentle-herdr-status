@@ -1,12 +1,13 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { after, test } from "node:test";
 
 import { createExtension } from "../extensions/pi-herdr-status.ts";
 import { CONFIG_ENV, DEFAULT_CONFIG, OPTION_IDS, saveConfig } from "../src/config.ts";
 import { DEBUG_ENV } from "../src/debug.ts";
+import { BACKUP_SUFFIX, HERDR_CONFIG_ENV, type HerdrRun } from "../src/herdr-config.ts";
 import { JOBS_SIDEBAR_EVENT } from "../src/jobs.ts";
 import {
 	CHANGES_TOKEN,
@@ -67,7 +68,7 @@ type CommandOptions = { description?: string; handler: CommandHandler };
 
 function load(
 	env: Record<string, string | undefined> = HERDR_ENV,
-	deps: { readPhase?: PhaseReader; runGit?: GitRun; configPath?: string } = {},
+	deps: { readPhase?: PhaseReader; runGit?: GitRun; configPath?: string; herdrRun?: HerdrRun } = {},
 ) {
 	const configPath = deps.configPath ?? freshConfigPath();
 	// Sin ruta explícita el test escribiría en el archivo real del usuario.
@@ -90,6 +91,7 @@ function load(
 		send: async (request) => { sent.push(request); return true; },
 		readPhase: deps.readPhase,
 		runGit: deps.runGit,
+		herdrRun: deps.herdrRun,
 		setInterval: (fn, ms) => { const id = nextTimer++; timers.set(id, { fn, ms }); return id; },
 		clearInterval: (id) => { timers.delete(id as number); },
 	})(pi as never);
@@ -947,4 +949,110 @@ test("S15: saving a switched-off token clears it at once, without waiting for an
 	await done;
 	assert.equal(last()!.tokens[TOKEN], null, "the running subagent disappears right away");
 	assert.equal(last()!.tokens[NAME_TOKEN], PANEL_NAME, "the rest of the row is untouched");
+});
+
+/** Runner falso de `herdr`: registra cada invocación y responde ok salvo que el test diga otra cosa. */
+function fakeHerdrRun(options: { check?: boolean; reload?: boolean } = {}) {
+	const calls: Array<{ file: string; args: string[] }> = [];
+	const run: HerdrRun = async (file, args) => {
+		calls.push({ file, args: [...args] });
+		return { ok: args[1] === "check" ? options.check ?? true : options.reload ?? true };
+	};
+	return { calls, run };
+}
+
+/** Baja el cursor hasta la fila de Sync Herdr rows, después de la de guardar. */
+function moveToSync(panel: Panel): void {
+	for (let index = 0; index <= OPTION_IDS.length; index += 1) panel.handleInput(KEYS.down);
+}
+
+/** Un config de Herdr propio por test: nunca se toca el archivo real del usuario. */
+function freshHerdrPath(name: string, content?: string): string {
+	const path = join(TMP_ROOT, `herdr-${name}`, "config.toml");
+	mkdirSync(dirname(path), { recursive: true });
+	if (content !== undefined) writeFileSync(path, content);
+	return path;
+}
+
+test("S16: the panel lists the sidebar colors option and the Sync Herdr rows action", async () => {
+	const { commands } = load({ ...HERDR_ENV, [HERDR_CONFIG_ENV]: freshHerdrPath("panel") });
+	const { panel, done } = openPanel(commands);
+	const lines = panel().render(80).join("\n");
+	assert.match(lines, /Sidebar colors: off/u, "the colors option is visible");
+	assert.match(lines, /Sync Herdr rows/u, "the sync action sits next to Save changes");
+	panel().handleInput(KEYS.cancel);
+	await done;
+});
+
+test("S16: Sync Herdr rows writes the managed block and reloads Herdr after a successful check", async () => {
+	const herdrPath = freshHerdrPath("sync", "[ui.sound]\nenabled = true\n");
+	const herdr = fakeHerdrRun();
+	const { commands, fire, configPath } = load({ ...HERDR_ENV, [HERDR_CONFIG_ENV]: herdrPath }, { herdrRun: herdr.run });
+	await fire("session_start", { reason: "startup" });
+	const { ui, panel, done } = openPanel(commands);
+	moveTo(panel(), "colors");
+	panel().handleInput(KEYS.confirm);
+	moveToSync(panel());
+	panel().handleInput(KEYS.confirm);
+	await done;
+	const written = readFileSync(herdrPath, "utf8");
+	assert.ok(written.startsWith("[ui.sound]\nenabled = true\n"), "the rest of the Herdr config is kept");
+	assert.match(written, /# BEGIN pi-herdr-status \(managed; do not edit\)/u);
+	assert.match(written, /fg = "#89dceb"/u, "the colors of the draft are in the block");
+	assert.ok(existsSync(`${herdrPath}${BACKUP_SUFFIX}`), "the previous file is backed up");
+	assert.deepEqual(herdr.calls.map((call) => [call.file, ...call.args]), [
+		["herdr", "config", "check"],
+		["herdr", "server", "reload-config"],
+	], "check first, reload after it");
+	assert.equal(JSON.parse(readFileSync(configPath, "utf8")).colors, true, "the draft is saved with the config");
+	assert.ok(ui.notifications.some((notice) => /synced/u.test(notice.message) && notice.level === "info"));
+});
+
+test("PRESERVE: saving the config from the panel never touches the Herdr config", async () => {
+	const original = "[ui.sound]\nenabled = true\n";
+	const herdrPath = freshHerdrPath("save", original);
+	const herdr = fakeHerdrRun();
+	const { commands, fire, configPath } = load({ ...HERDR_ENV, [HERDR_CONFIG_ENV]: herdrPath }, { herdrRun: herdr.run });
+	await fire("session_start", { reason: "startup" });
+	const { panel, done } = openPanel(commands);
+	moveTo(panel(), "colors");
+	panel().handleInput(KEYS.confirm);
+	panel().handleInput(SAVE_KEY);
+	await done;
+	assert.equal(JSON.parse(readFileSync(configPath, "utf8")).colors, true, "saving still writes the JSON");
+	assert.equal(readFileSync(herdrPath, "utf8"), original, "the Herdr config is byte for byte the same");
+	assert.deepEqual(herdr.calls, [], "nor is herdr invoked");
+	assert.equal(existsSync(`${herdrPath}${BACKUP_SUFFIX}`), false, "and no backup appears");
+});
+
+test("S16: a Herdr config this package does not own is reported and left untouched", async () => {
+	const foreign = "[ui.sidebar.agents.rows_by_agent]\nclaude = [[\"state_icon\"]]\n";
+	const herdrPath = freshHerdrPath("denied", foreign);
+	const herdr = fakeHerdrRun();
+	const { commands, fire } = load({ ...HERDR_ENV, [HERDR_CONFIG_ENV]: herdrPath }, { herdrRun: herdr.run });
+	await fire("session_start", { reason: "startup" });
+	const { ui, panel, done } = openPanel(commands);
+	moveToSync(panel());
+	panel().handleInput(KEYS.confirm);
+	await done;
+	assert.equal(readFileSync(herdrPath, "utf8"), foreign, "byte for byte");
+	assert.deepEqual(herdr.calls, [], "herdr is never invoked");
+	const notice = ui.notifications.at(-1);
+	assert.equal(notice?.level, "warning", "a refusal is not an error, but it is not silent");
+	assert.match(notice?.message ?? "", /rows_by_agent/u, "the notice explains what blocked the sync");
+});
+
+test("S16: without a Herdr config the sync reports an error and creates nothing", async () => {
+	const herdrPath = join(TMP_ROOT, "herdr-missing", "config.toml");
+	const herdr = fakeHerdrRun();
+	const { commands } = load({ ...HERDR_ENV, [HERDR_CONFIG_ENV]: herdrPath }, { herdrRun: herdr.run });
+	const { ui, panel, done } = openPanel(commands);
+	moveToSync(panel());
+	panel().handleInput(KEYS.confirm);
+	await done;
+	assert.equal(existsSync(herdrPath), false, "the file is never created");
+	assert.deepEqual(herdr.calls, []);
+	const notice = ui.notifications.at(-1);
+	assert.equal(notice?.level, "error");
+	assert.match(notice?.message ?? "", /Herdr/u);
 });

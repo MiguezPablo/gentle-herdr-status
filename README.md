@@ -68,7 +68,8 @@ before the file always win over it:
   "changes": false,
   "name": "gentle",
   "showSubagent": true,
-  "showJobs": true
+  "showJobs": true,
+  "colors": false
 }
 ```
 
@@ -80,6 +81,7 @@ before the file always win over it:
 | `name` | text | `gentle` | The `$name` token. Sanitized to one line and capped at 32 characters; empty or blank reads `gentle`. |
 | `showSubagent` | `true`, `false` | `true` | `false` keeps `$subagent` unset, so its row disappears. |
 | `showJobs` | `true`, `false` | `true` | `false` keeps `$jobs` unset, so its row disappears. |
+| `colors` | `true`, `false` | `false` | Colors in the managed Herdr row (see [Sync Herdr rows](#sync-herdr-rows)). |
 
 A missing file, an unreadable one, invalid JSON or an invalid field never breaks the
 extension: that field falls back to its own default and the rest is kept. Saving writes
@@ -99,7 +101,7 @@ a variable forces, the mark `(forzado por PI_HERDR_STATUS_STYLE)` or
 | Key | Action |
 | --- | --- |
 | `↑` `↓` | Move between rows. |
-| `Enter` | Cycle the selected option (`brackets` ↔ `emoji`, `arrow` ↔ `emoji`, `on` ↔ `off`), or start and confirm editing the panel name. |
+| `Enter` | Cycle the selected option (`brackets` ↔ `emoji`, `arrow` ↔ `emoji`, `on` ↔ `off`), start and confirm editing the panel name, or run the selected action (`Save changes`, `Sync Herdr rows`). |
 | `ctrl+s` | Save: write the file and apply it live. |
 | `Esc` | Cancel without writing. While editing the name it only leaves the edit, discarding the text. |
 
@@ -110,6 +112,72 @@ the extension reads the file besides `session_start`; nothing polls it.
 
 Without an interactive TUI the command writes nothing and only reports the config in
 effect and the file path.
+
+The last two rows are actions. `Save changes` writes the JSON and applies it live.
+`Sync Herdr rows` saves the same draft and then writes the `pi` row in Herdr's own config,
+inside a block this package owns (see [Sync Herdr rows](#sync-herdr-rows)).
+
+### Sync Herdr rows
+
+Herdr rows are Herdr's own configuration, not metadata an extension can publish, so
+`Sync Herdr rows` writes the `pi` row into `config.toml` for you. It edits only a block it
+owns:
+
+```toml
+# BEGIN pi-herdr-status (managed; do not edit)
+[ui.sidebar.agents.rows_by_agent]
+pi = [["state_icon", "machine", "workspace", "tab"], ["$name", "$phase"], ["$subagent"], ["$jobs"]]
+# END pi-herdr-status
+```
+
+The rows follow the panel: `$changes` joins the name row only while the counter is on, and
+a row whose token is switched off (`$subagent`, `$jobs`) is left out.
+
+Where the file lives, resolved from the environment: `HERDR_CONFIG_PATH` when it is set,
+else `$XDG_CONFIG_HOME/herdr/config.toml`, else `~/.config/herdr/config.toml`. The binary
+is `HERDR_BIN_PATH` when it is set, else `herdr`.
+
+What it does, in order:
+
+1. Reads the file. **If it does not exist it stops with an error and never creates it**, so
+   a wrong path cannot invent a config.
+2. Replaces its own block when it is there.
+3. Without a block it appends one, unless a `[ui.sidebar.agents.rows_by_agent]` table is
+   already there. That table is migrated only when it is exactly the row this package used
+   to ask you to write by hand: the comment `# pi-herdr-status:`, the table and a single
+   `pi = …` key. Any other `rows_by_agent` table (another tool's, extra keys, a missing
+   comment) is refused with a notice and **nothing is written**, so another integration's
+   row is never overwritten.
+4. Backs the file up to `<config>.pi-herdr-status.bak`, writes a temporary file next to it
+   and renames it, so a reader never sees a half-written config.
+5. Runs `herdr config check`. If it fails, the backup is restored and the error reported;
+   the reload never runs.
+6. Runs `herdr server reload-config`, so the sidebar picks up the change without
+   restarting Herdr.
+
+The result is reported in the panel: synced (info), refused (warning) or failed (error).
+The JSON config is saved before the sync, so the block always matches what the panel shows.
+
+With `colors: false` (the default) every cell is a plain token string, which is the block
+above. With `colors: true` the cells become Herdr style tables (`{ token = "…", fg = "…",
+rules = […] }`), which is where colors live: `fg` takes a strict hex color and `rules`
+compare the reported value, first match wins.
+
+| Token | Style |
+| --- | --- |
+| `$name` | none: the panel name keeps the terminal's default color. |
+| `$phase` | one rule per phase, with `contains` and `ignore_case` so both phase styles match: exploring/researching blue, planning/deciding/authorizing mauve, implementing yellow, checking green, closing grey. |
+| `$changes` | a neutral foreground: one color cannot paint `+` green and `-` red inside the same token, so it is not attempted. |
+| `$subagent` | sky (`#89dceb`). |
+| `$jobs` | grey (`#7f849c`). |
+
+The hex values are the Catppuccin Mocha palette (`#89b4fa` blue, `#cba6f7` mauve,
+`#f9e2af` yellow, `#a6e3a1` green, `#7f849c` overlay, `#89dceb` sky, `#cdd6f4` neutral), so
+they do not follow Herdr's own theme. Colors are off by default, like everything else.
+
+To undo it by hand: delete the block from `# BEGIN pi-herdr-status …` through
+`# END pi-herdr-status` (or restore `<config>.pi-herdr-status.bak`) and run
+`herdr server reload-config`. Nothing else in the file was ever touched.
 
 ### Precedence
 
@@ -220,8 +288,9 @@ This package only publishes presentation metadata (`pane.report_metadata`). It n
 - sends desktop notifications or sounds: Herdr decides them from its `[ui.toast]` and
   `[ui.sound]` settings, so turning them off in Herdr turns them off everywhere;
 - reacts to UI prompts: opening a subagent viewer or a menu changes nothing;
-- shows branches or colors. Change counts only appear when `$changes` is turned on, and
-  the sidebar colors stay in Herdr's own `config.toml`.
+- shows branches. Change counts only appear when `$changes` is turned on. Colors are
+  optional and only ever written by **Sync Herdr rows**, inside this package's managed
+  block in Herdr's own `config.toml`.
 
 ## Requirements
 
@@ -245,8 +314,11 @@ From a local checkout:
 pi install /absolute/path/to/pi-herdr-status
 ```
 
-Then add the rows for Pi panes in `~/.config/herdr/config.toml`.
-`rows_by_agent` replaces the default rows, so they are listed again:
+Then add the rows for Pi panes with the panel: run `/herdr-status` inside Pi and choose
+**Sync Herdr rows** (see [Sync Herdr rows](#sync-herdr-rows)). It writes the `pi` row
+inside a block it owns, so `~/.config/herdr/config.toml` never has to be edited by hand.
+
+Manually, `rows_by_agent` replaces the default rows, so they are listed again:
 
 ```toml
 [ui.sidebar.agents.rows_by_agent]
@@ -257,7 +329,9 @@ pi = [["state_icon", "machine", "workspace", "tab"], ["$name", "$phase"], ["$sub
 phase. With `$changes` turned on, add it to that row (`["$name", "$phase", "$changes"]`)
 to read `gentle [exploring] +120 -40`. `$subagent` and `$jobs` live in rows of their own,
 so each disappears (row and all) when its token is unset. Apply it with
-`herdr server reload-config`. A row whose only token is unset is hidden.
+`herdr server reload-config`. A row whose only token is unset is hidden. If you write it by
+hand with the comment `# pi-herdr-status:`, the next **Sync Herdr rows** migrates that row
+into the managed block.
 
 ## How it works
 
@@ -313,6 +387,10 @@ so each disappears (row and all) when its token is unset. Apply it with
   write, panel rows); the `/herdr-status` panel is a thin TUI layer on top of it and only
   hands the edited config back, so the handler is the one that writes the file and applies
   it.
+- The managed Herdr block lives in `src/herdr-config.ts` (rows and colors, the plan for
+  replacing or migrating, backup plus atomic write, `herdr config check` and
+  `herdr server reload-config`), with the filesystem and the runner injected, so tests only
+  ever write temp files and never run the real `herdr`.
 - All tokens share source `pi-herdr-status` and one `seq` stream (Herdr orders reports
   per source by `seq`), and every report carries all of them.
 - Every token carries a 90 s TTL and is refreshed every 30 s while shown, so they expire

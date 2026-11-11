@@ -41,6 +41,7 @@ test("S13: the defaults are the current behaviour: brackets, arrow, no changes, 
 		name: PANEL_NAME,
 		showSubagent: true,
 		showJobs: true,
+		colors: false,
 	});
 	assert.equal(PANEL_NAME, "gentle");
 	for (const raw of [undefined, null, "config", 7, [], {}]) {
@@ -56,6 +57,7 @@ test("S13: an invalid field falls back to its own default and the valid ones are
 		name: 42,
 		showSubagent: "no",
 		showJobs: false,
+		colors: "yes",
 	}), {
 		phaseStyle: "brackets",
 		subagentStyle: "emoji",
@@ -63,6 +65,7 @@ test("S13: an invalid field falls back to its own default and the valid ones are
 		name: "gentle",
 		showSubagent: true,
 		showJobs: false,
+		colors: false,
 	});
 	assert.deepEqual(normalizeConfig({ phaseStyle: "emoji", subagentStyle: "arrow", changes: true }), {
 		...DEFAULT_CONFIG,
@@ -163,12 +166,12 @@ test("S13: an environment variable forces its option, a file alone does not", ()
 });
 
 test("S13: every option is listed once, with its value and the variable that forces it", () => {
-	assert.deepEqual([...OPTION_IDS], ["phaseStyle", "subagentStyle", "changes", "showSubagent", "showJobs", "name"]);
+	assert.deepEqual([...OPTION_IDS], ["phaseStyle", "subagentStyle", "changes", "showSubagent", "showJobs", "colors", "name"]);
 	const config: HerdrStatusConfig = { ...DEFAULT_CONFIG, subagentStyle: "emoji", showJobs: false };
 	const { forced } = effectiveConfig(config, { [STYLE_ENV]: "emoji", [CHANGES_ENV]: "0" });
 	const rows = optionRows(config, forced);
 	assert.deepEqual(rows.map((row) => row.id), [...OPTION_IDS], "one row per option, in a stable order");
-	assert.deepEqual(rows.map((row) => row.value), ["brackets", "emoji", "off", "on", "off", "gentle"]);
+	assert.deepEqual(rows.map((row) => row.value), ["brackets", "emoji", "off", "on", "off", "off", "gentle"]);
 	assert.equal(rows[0].forcedBy, STYLE_ENV, "a forced option carries its variable");
 	assert.equal(rows[2].forcedBy, CHANGES_ENV);
 	assert.equal(rows[1].forcedBy, undefined, "an unforced option can be edited");
@@ -184,6 +187,7 @@ test("S13: cycling turns one option to its other value and leaves the rest alone
 	assert.equal(cycleOption(config, "changes").changes, true);
 	assert.equal(cycleOption(config, "showSubagent").showSubagent, false);
 	assert.equal(cycleOption(config, "showJobs").showJobs, false);
+	assert.equal(cycleOption(config, "colors").colors, true);
 	assert.deepEqual(cycleOption(config, "name"), config, "the name is text, it does not cycle");
 	assert.deepEqual(config, DEFAULT_CONFIG, "the original config is never mutated");
 });
@@ -198,6 +202,7 @@ test("S13: renaming normalizes like the loaded file and never leaves the name em
 
 test("S15: the one-line description names every option, for the non-TUI report", () => {
 	const text = describeConfig({ ...DEFAULT_CONFIG, subagentStyle: "emoji", changes: true, showJobs: false, name: "side" });
-	for (const part of ["brackets", "emoji", "on", "off", "side"]) assert.ok(text.includes(part), `${part} in ${text}`);
+	for (const part of ["brackets", "emoji", "off", "on", "side"]) assert.ok(text.includes(part), `${part} in ${text}`);
+	assert.ok(text.includes("colors"));
 	assert.ok(!text.includes("gentle"), "the chosen name replaces the default");
 });
