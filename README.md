@@ -5,11 +5,12 @@ Pi extension that shows the running subagent in the [Herdr](https://herdr.dev) s
 ```
 ● pmiguez · 1
 pi
-explore (2)
+↳ explore (2)
 ```
 
-The `$subagent` token holds the oldest running subagent's name, plus the total count in
-parentheses when two or more run. It disappears when no subagent runs.
+The `$subagent` token holds the `↳ ` prefix that marks the row as a subagent, the oldest
+running subagent's name, plus the total count in parentheses when two or more run. It
+disappears when no subagent runs; the arrow never shows on its own.
 
 ## What it does not do
 

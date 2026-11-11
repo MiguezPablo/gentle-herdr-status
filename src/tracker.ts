@@ -1,7 +1,8 @@
 /**
  * Tracks the subagents this Pi session launched, in launch order, and renders
- * the sidebar label: the oldest running agent name, plus the total count in
- * parentheses when two or more run, e.g. `explore` or `worker (3)`.
+ * the sidebar label: a `↳ ` prefix that marks the row as a child, then the oldest
+ * running agent name, plus the total count in parentheses when two or more run,
+ * e.g. `↳ explore` or `↳ worker (3)`. Nothing running renders no label at all.
  *
  * Sources (gentle-pi):
  * - tool_call of `subagent_run` / `subagent_continue` in task mode (the default):
@@ -12,6 +13,9 @@
  */
 
 export const FINISHED_STATUSES: ReadonlySet<string> = new Set(["completed", "failed", "cancelled", "timed_out"]);
+
+/** Marks the label as a subagent, never part of the sanitized or capped name. */
+export const LABEL_PREFIX = "↳ ";
 
 const RUN_TOOL = "subagent_run";
 const CONTINUE_TOOL = "subagent_continue";
@@ -74,7 +78,7 @@ export class SubagentTracker {
 		const first = this.running.values().next();
 		if (first.done) return null;
 		const count = this.running.size;
-		return count >= 2 ? `${first.value.agent} (${count})` : first.value.agent;
+		return count >= 2 ? `${LABEL_PREFIX}${first.value.agent} (${count})` : `${LABEL_PREFIX}${first.value.agent}`;
 	}
 
 	reset(): void {

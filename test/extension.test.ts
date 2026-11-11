@@ -60,12 +60,12 @@ test("session start wipes any stale token, then a subagent shows and clears", as
 	await fire("session_start", { reason: "startup" });
 	assert.deepEqual(tokens(), [null]);
 	await fire("tool_call", { toolCallId: "c1", toolName: "subagent_run", input: { agent: "explore", task: "x" } });
-	assert.deepEqual(tokens(), [null, "explore"]);
+	assert.deepEqual(tokens(), [null, "↳ explore"]);
 	await fire("tool_result", {
 		toolCallId: "c1", toolName: "subagent_run",
 		details: { gentleAgents: { taskId: "t1", agent: "explore", status: "completed" } },
 	});
-	assert.deepEqual(tokens(), [null, "explore", null]);
+	assert.deepEqual(tokens(), [null, "↳ explore", null]);
 });
 
 test("a background subagent clears when the gentle-pi bus reports it finished", async () => {
@@ -76,9 +76,9 @@ test("a background subagent clears when the gentle-pi bus reports it finished", 
 		toolCallId: "c1", toolName: "subagent_run",
 		details: { gentleAgents: { taskId: "t1", agent: "worker", status: "running" } },
 	});
-	assert.equal(tokens().at(-1), "worker");
+	assert.equal(tokens().at(-1), "↳ worker");
 	await emit("gentle-pi:notification:source", { source: "main", event: "agent.completed" });
-	assert.equal(tokens().at(-1), "worker", "main-agent events are ignored");
+	assert.equal(tokens().at(-1), "↳ worker", "main-agent events are ignored");
 	await emit("gentle-pi:notification:source", { source: "subagent", taskId: "t1", status: "completed", event: "subagent.completed" });
 	assert.equal(tokens().at(-1), null);
 });
