@@ -6,7 +6,7 @@ what the orchestrator is doing and the jobs it launched:
 ```
 ● pmiguez · 1
 gentle [exploring]
-↳ explore (2)
+↳ explore (+1)
 ⏵ CI for PR 1834
 ```
 
@@ -19,11 +19,14 @@ gentle [exploring]
   disappears when the agent goes idle, so the row reads just `gentle`.
 - `$subagent` holds the `↳ ` prefix that marks the row as a subagent, the oldest
   running subagent's name without gentle-pi's `gentle-ai-` prefix (`gentle-ai-explore`
-  shows as `explore`), plus the total count in parentheses when two or more run, e.g.
-  `↳ explore`, `↳ verify (2)`. It disappears when no subagent runs; the arrow never shows
-  on its own.
-- `$jobs` holds the `⏵ ` prefix and the oldest running job's label, plus the total count
-  in parentheses when two or more run, e.g. `⏵ CI for PR 1834`, `⏵ logs (2)`. A job keeps
+  shows as `explore`), plus how many other subagents run alongside it, in parentheses
+  with a `+`, when two or more run, e.g. `↳ explore`, `↳ verify (+1)`. Names are sanitized
+  to one line of at most 32 characters: terminal escape sequences (CSI colours and OSC
+  titles) and control characters are dropped. It disappears when no subagent runs; the
+  arrow never shows on its own.
+- `$jobs` holds the `⏵ ` prefix and the oldest running job's label, plus how many other
+  jobs run alongside it, in parentheses with a `+`, when two or more run, e.g.
+  `⏵ CI for PR 1834`, `⏵ logs (+1)`. A job keeps
   running without a turn, so this row is published while the agent is idle too; it is
   cleared when no job runs, on session start and on shutdown.
 
@@ -91,9 +94,11 @@ is unset is hidden.
   (`pi.events.on`): `{ sessionId, snapshot: { jobs } }`, where running jobs carry no
   `status` and recently finished ones carry `status`/`endedAt`/`exitCode`. Each event
   replaces the whole state; an event from another session id or with a malformed payload
-  changes nothing. Only running jobs are shown, the oldest by `startedAt` first, with the
-  total count when two or more run. The label is sanitized and capped like the subagent
-  name (32 characters, one line), and an empty label falls back to `job`. That event and
+  changes nothing. Only running jobs are shown, the oldest by `startedAt` first (a tie is
+  won by the job that comes first in the snapshot), plus how many others run in
+  parentheses (`+N`) when two or more run. The label is sanitized and capped like the
+  subagent name (one line, 32 characters, escape sequences and control characters
+  dropped), and an empty label falls back to `job`. That event and
   gentle-pi's `JOBS_SIDEBAR_EVENT` name are internals of gentle-pi: they can change
   without notice, and then the row simply disappears.
 - The phase comes from gentle-pi's process-global ODD registry

@@ -1,7 +1,8 @@
 /**
  * Jobs del orquestador en una fila propia del sidebar: `⏵ label` cuando corre uno, y
- * `⏵ label (N)` con el más viejo (por `startedAt`) más el total cuando corren dos o más.
- * Sin jobs corriendo no hay token, igual que el subagente.
+ * `⏵ label (+N)` con el más viejo (por `startedAt`) más cuántos otros corren cuando hay dos
+ * o más. Sin jobs corriendo no hay token, igual que el subagente. Un empate de `startedAt`
+ * lo gana el que viene primero en el snapshot (el orden de inserción se conserva).
  *
  * Fuente (gentle-pi, `lib/jobs-sidebar-state.ts`): el evento `gentle-ai:jobs-sidebar` del
  * bus de Pi trae `{ sessionId, snapshot: { jobs } }`. Cada evento reemplaza el estado
@@ -59,8 +60,8 @@ export class JobsTracker {
 		const first = this.running[0];
 		if (!first) return null;
 		const name = sanitizeName(first.label) || FALLBACK_LABEL;
-		const count = this.running.length;
-		return count >= 2 ? `${JOBS_PREFIX}${name} (${count})` : `${JOBS_PREFIX}${name}`;
+		const others = this.running.length - 1;
+		return others >= 1 ? `${JOBS_PREFIX}${name} (+${others})` : `${JOBS_PREFIX}${name}`;
 	}
 
 	reset(): void {

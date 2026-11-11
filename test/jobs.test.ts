@@ -24,14 +24,24 @@ test("one running job shows its label after the arrow, without a count", () => {
 	assert.equal(tracker.label(), `${JOBS_PREFIX}CI for PR 1834`);
 });
 
-test("two or more running jobs show the oldest one and the total count", () => {
+test("two or more running jobs show the oldest one plus how many others run", () => {
 	const tracker = new JobsTracker();
 	tracker.snapshot(snapshot("s1", [
 		running("j3", "dev server", 30),
 		running("j1", "CI for PR 1834", 10),
 		running("j2", "logs", 20),
 	]), "s1");
-	assert.equal(tracker.label(), `${JOBS_PREFIX}CI for PR 1834 (3)`, "the oldest job, with the count");
+	assert.equal(tracker.label(), `${JOBS_PREFIX}CI for PR 1834 (+2)`, "the oldest job, plus the others");
+});
+
+test("jobs with the same startedAt keep the snapshot order and the first one wins", () => {
+	const tracker = new JobsTracker();
+	tracker.snapshot(snapshot("s1", [
+		running("j1", "first in snapshot", 10),
+		running("j2", "second in snapshot", 10),
+	]), "s1");
+	assert.equal(tracker.label(), `${JOBS_PREFIX}first in snapshot (+1)`, "a tie is broken by snapshot order");
+	assert.equal(JOBS_PREFIX, "⏵ ", "the prefix is exactly the arrow and one space");
 });
 
 test("finished jobs are listed but never shown nor counted", () => {
@@ -45,7 +55,7 @@ test("finished jobs are listed but never shown nor counted", () => {
 test("each event replaces the whole state", () => {
 	const tracker = new JobsTracker();
 	tracker.snapshot(snapshot("s1", [running("j1", "logs", 10), running("j2", "dev server", 20)]), "s1");
-	assert.equal(tracker.label(), `${JOBS_PREFIX}logs (2)`);
+	assert.equal(tracker.label(), `${JOBS_PREFIX}logs (+1)`);
 	tracker.snapshot(snapshot("s1", [running("j2", "dev server", 20)]), "s1");
 	assert.equal(tracker.label(), `${JOBS_PREFIX}dev server`, "the job the snapshot dropped is gone");
 });

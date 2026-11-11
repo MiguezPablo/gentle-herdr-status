@@ -1,9 +1,9 @@
 /**
  * Tracks the subagents this Pi session launched, in launch order, and renders
  * the sidebar label: a `↳ ` prefix that marks the row as a child, then the oldest
- * running agent name without gentle-pi's `gentle-ai-` prefix, plus the total count in
- * parentheses when two or more run, e.g. `↳ explore` or `↳ worker (3)`. Nothing running
- * renders no label at all.
+ * running agent name without gentle-pi's `gentle-ai-` prefix, plus how many other agents
+ * run alongside it in parentheses when two or more run, e.g. `↳ explore` or
+ * `↳ worker (+2)`. Nothing running renders no label at all.
  *
  * Sources (gentle-pi):
  * - tool_call of `subagent_run` / `subagent_continue` in task mode (the default):
@@ -35,9 +35,11 @@ function text(value: unknown): string | undefined {
 	return typeof value === "string" && value.length > 0 ? value : undefined;
 }
 
-/** One printable line: control characters become spaces, then trimmed and capped. */
+/** One printable line: escape sequences, then control characters, trimmed and capped. */
 export function sanitizeName(value: string): string {
 	const clean = value
+		// OSC entera (título de terminal, hyperlinks): termina en BEL o en ST (ESC \\)
+		.replace(/\u001b\][^\u0007\u001b]*(?:\u0007|\u001b\\)/g, "")
 		.replace(/\u001b\[[0-9;?]*[ -/]*[@-~]/g, "")
 		.replace(/[\u0000-\u001f\u007f-\u009f]+/g, " ")
 		.replace(/\s+/g, " ")
@@ -92,8 +94,9 @@ export class SubagentTracker {
 	label(): string | null {
 		const first = this.running.values().next();
 		if (first.done) return null;
-		const count = this.running.size;
-		return count >= 2 ? `${LABEL_PREFIX}${first.value.agent} (${count})` : `${LABEL_PREFIX}${first.value.agent}`;
+		const others = this.running.size - 1;
+		const name = first.value.agent;
+		return others >= 1 ? `${LABEL_PREFIX}${name} (+${others})` : `${LABEL_PREFIX}${name}`;
 	}
 
 	reset(): void {

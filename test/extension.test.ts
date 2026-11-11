@@ -389,7 +389,7 @@ test("S9: $jobs shows the oldest running job in its own row, even while the agen
 		job("j2", "dev server", 30),
 		job("j1", "CI for PR 1834", 10),
 	]));
-	assert.equal(jobs().at(-1), "⏵ CI for PR 1834 (2)", "the oldest job plus the count");
+	assert.equal(jobs().at(-1), "⏵ CI for PR 1834 (+1)", "the oldest job plus how many others run");
 	assert.equal(last()!.ttl_ms, TTL_MS, "a shown job rides the shared TTL");
 	assert.deepEqual(timerMs(), [REFRESH_MS], "no poll of its own, only the publisher's refresh");
 });
