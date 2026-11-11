@@ -224,14 +224,14 @@ test("S14: the emoji style replaces the arrow with the agent's emoji, counter an
 	assert.equal(tracker.label("emoji"), "🤖 explore-x", "only the exact agent name has its own emoji");
 });
 
-test("S14/PRESERVE: the arrow style is the default and keeps every label byte for byte", () => {
+test("S14/PRESERVE: the plain style is the default and keeps every label byte for byte", () => {
 	const tracker = new SubagentTracker();
 	tracker.toolResult("c1", "subagent_run", details("t1", "explore", "running"));
 	tracker.toolCall("c2", "subagent_run", { agent: "worker", task: "x" });
 	assert.equal(tracker.label(), "↳ explore (+1)");
-	assert.equal(tracker.label("arrow"), "↳ explore (+1)", "the explicit arrow style equals the default");
+	assert.equal(tracker.label("plain"), "↳ explore (+1)", "the explicit plain style equals the default");
 	tracker.reset();
 	tracker.toolCall("c3", "subagent_run", { agent: `evil\nname\u001b[31m${"x".repeat(80)}`, task: "x" });
-	assert.equal(tracker.label("arrow"), `↳ evil name${"x".repeat(23)}`, "sanitized and capped as before");
+	assert.equal(tracker.label("plain"), `↳ evil name${"x".repeat(23)}`, "sanitized and capped as before");
 	assert.equal(tracker.label("emoji"), `🤖 evil name${"x".repeat(23)}`, "the emoji keeps the same sanitized name");
 });

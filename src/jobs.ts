@@ -1,8 +1,9 @@
 /**
  * Jobs del orquestador en una fila propia del sidebar: `⏵ label` cuando corre uno, y
  * `⏵ label (+N)` con el más viejo (por `startedAt`) más cuántos otros corren cuando hay dos
- * o más. Sin jobs corriendo no hay token, igual que el subagente. Un empate de `startedAt`
- * lo gana el que viene primero en el snapshot (el orden de inserción se conserva).
+ * o más. Con el estilo emoji el prefijo es `🔄 ` en lugar de `⏵ ` (`🔄 build (+1)`); el resto
+ * del label no cambia. Sin jobs corriendo no hay token, igual que el subagente. Un empate de
+ * `startedAt` lo gana el que viene primero en el snapshot (el orden de inserción se conserva).
  *
  * Fuente (gentle-pi, `lib/jobs-sidebar-state.ts`): el evento `gentle-ai:jobs-sidebar` del
  * bus de Pi trae `{ sessionId, snapshot: { jobs } }`. Cada evento reemplaza el estado
@@ -11,12 +12,18 @@
  * los corriendo, y se ignora cualquier evento de otra sesión o con forma inválida. Ese
  * evento es un interno de gentle-pi y puede cambiar sin aviso.
  */
+import type { Style } from "./phase.ts";
 import { sanitizeName } from "./tracker.ts";
 
 /** Evento interno de gentle-pi (constante JOBS_SIDEBAR_EVENT) con el snapshot de jobs. */
 export const JOBS_SIDEBAR_EVENT = "gentle-ai:jobs-sidebar";
 /** Marca la fila como jobs del orquestador; nunca forma parte del label saneado. */
 export const JOBS_PREFIX = "⏵ ";
+/**
+ * Prefijo del estilo emoji: un solo codepoint (U+1F504), sin selector de variación U+FE0F, así
+ * que el terminal dibuja un glifo. Reemplaza a `⏵ `; el resto del label es igual.
+ */
+export const JOBS_EMOJI = "🔄";
 /** Label de reemplazo cuando gentle-pi manda un label vacío. */
 const FALLBACK_LABEL = "job";
 
@@ -56,12 +63,13 @@ export class JobsTracker {
 		this.running = running.sort((a, b) => a.startedAt - b.startedAt);
 	}
 
-	label(): string | null {
+	label(style: Style = "plain"): string | null {
 		const first = this.running[0];
 		if (!first) return null;
 		const name = sanitizeName(first.label) || FALLBACK_LABEL;
 		const others = this.running.length - 1;
-		return others >= 1 ? `${JOBS_PREFIX}${name} (+${others})` : `${JOBS_PREFIX}${name}`;
+		const prefix = style === "emoji" ? `${JOBS_EMOJI} ` : JOBS_PREFIX;
+		return others >= 1 ? `${prefix}${name} (+${others})` : `${prefix}${name}`;
 	}
 
 	reset(): void {

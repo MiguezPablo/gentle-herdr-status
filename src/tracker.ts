@@ -7,7 +7,8 @@
  *
  * The prefix is the only thing the style changes: with the emoji style it is one emoji per
  * agent instead of `↳ ` (`🧭 explore (+1)`, `🔨 worker`, `🧪 verify`, `🤖` for any other),
- * because an arrow says "child" but not which child. Name, cap and counter are shared.
+ * because an arrow says "child" but not which child. El estilo es uno solo para todo el
+ * sidebar (`Style`): `plain` es el default. Name, cap and counter are shared.
  *
  * Sources (gentle-pi):
  * - tool_call of `subagent_run` / `subagent_continue` in task mode (the default):
@@ -17,16 +18,12 @@
  * - status changes from the `gentle-pi:notification:source` bus (no agent name).
  */
 
+import type { Style } from "./phase.ts";
+
 export const FINISHED_STATUSES: ReadonlySet<string> = new Set(["completed", "failed", "cancelled", "timed_out"]);
 
 /** Marks the label as a subagent, never part of the sanitized or capped name. */
 export const LABEL_PREFIX = "↳ ";
-
-/**
- * Cómo se marca el subagente: la flecha `↳ ` (default) o un emoji por agente. Es un
- * estilo del prefijo, nada más: el nombre saneado, el tope y el contador no cambian.
- */
-export type SubagentStyle = "arrow" | "emoji";
 
 /**
  * Un emoji por agente, de un solo codepoint y sin selector de variación U+FE0F, así que el
@@ -114,7 +111,7 @@ export class SubagentTracker {
 		if (FINISHED_STATUSES.has(status)) this.running.delete(`task:${taskId}`);
 	}
 
-	label(style: SubagentStyle = "arrow"): string | null {
+	label(style: Style = "plain"): string | null {
 		const first = this.running.values().next();
 		if (first.done) return null;
 		const others = this.running.size - 1;

@@ -20,8 +20,8 @@ import { dirname, join } from "node:path";
 
 import { CHANGES_ENV, changesEnabled } from "./changes.ts";
 import { PANEL_NAME, type Env } from "./herdr.ts";
-import { STYLE_ENV, phaseStyle, type PhaseStyle } from "./phase.ts";
-import { sanitizeName, type SubagentStyle } from "./tracker.ts";
+import { STYLE_ENV, styleFromEnv, type Style } from "./phase.ts";
+import { sanitizeName } from "./tracker.ts";
 
 /** Ruta del archivo de config: reemplaza a la de XDG/HOME cuando está definida. */
 export const CONFIG_ENV = "PI_HERDR_STATUS_CONFIG";
@@ -30,10 +30,9 @@ export const CONFIG_DIR = "pi-herdr-status";
 /** Nombre del archivo de config dentro de ese directorio. */
 export const CONFIG_FILE = "config.json";
 
-/** Las siete opciones, en el orden en que el panel las muestra. */
+/** Las seis opciones, en el orden en que el panel las muestra. */
 export const OPTION_IDS = [
-	"phaseStyle",
-	"subagentStyle",
+	"style",
 	"changes",
 	"showSubagent",
 	"showJobs",
@@ -45,8 +44,8 @@ export type OptionId = (typeof OPTION_IDS)[number];
 
 /** Configuración del sidebar tal como se guarda en el archivo. */
 export interface HerdrStatusConfig {
-	phaseStyle: PhaseStyle;
-	subagentStyle: SubagentStyle;
+	/** Un solo estilo para fase, subagente y jobs: nunca por secciones. */
+	style: Style;
 	changes: boolean;
 	name: string;
 	showSubagent: boolean;
@@ -60,8 +59,7 @@ export interface HerdrStatusConfig {
  * config y sin variables el sidebar se vea igual que siempre.
  */
 export const DEFAULT_CONFIG: HerdrStatusConfig = {
-	phaseStyle: "brackets",
-	subagentStyle: "arrow",
+	style: "plain",
 	changes: false,
 	name: PANEL_NAME,
 	showSubagent: true,
@@ -71,7 +69,7 @@ export const DEFAULT_CONFIG: HerdrStatusConfig = {
 
 /** Opciones que una variable de entorno puede fijar; el resto sólo las edita el panel. */
 export const FORCED_BY: Partial<Record<OptionId, string>> = {
-	phaseStyle: STYLE_ENV,
+	style: STYLE_ENV,
 	changes: CHANGES_ENV,
 };
 
@@ -86,8 +84,7 @@ export interface EffectiveConfig {
 
 /** Etiqueta de cada opción en el panel. */
 const OPTION_LABELS: Record<OptionId, string> = {
-	phaseStyle: "Phase style",
-	subagentStyle: "Subagent style",
+	style: "Style",
 	changes: "Changes token",
 	showSubagent: "Subagent token",
 	showJobs: "Jobs token",
@@ -107,14 +104,21 @@ function record(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-/** Un `phaseStyle` válido, o undefined. */
-function readPhaseStyle(value: unknown): PhaseStyle | undefined {
-	return value === "brackets" || value === "emoji" ? value : undefined;
+/** Un `style` válido, o undefined. */
+function readStyle(value: unknown): Style | undefined {
+	return value === "plain" || value === "emoji" ? value : undefined;
 }
 
-/** Un `subagentStyle` válido, o undefined. */
-function readSubagentStyle(value: unknown): SubagentStyle | undefined {
-	return value === "arrow" || value === "emoji" ? value : undefined;
+/**
+ * El estilo de un archivo, con migración: un `style` válido manda; si no hay (o no es válido,
+ * que se lee como ausente) y el archivo viejo traía `phaseStyle` o `subagentStyle` en "emoji",
+ * el estilo es emoji; en cualquier otro caso, plain.
+ */
+function readStyleWithMigration(source: Record<string, unknown>): Style {
+	const style = readStyle(source.style);
+	if (style !== undefined) return style;
+	const legacy = source.phaseStyle === "emoji" || source.subagentStyle === "emoji";
+	return legacy ? "emoji" : DEFAULT_CONFIG.style;
 }
 
 /** Un nombre usable: una línea sagitada y con tope; vacío cae al default. */
@@ -125,13 +129,13 @@ function readName(value: unknown): string | undefined {
 
 /**
  * Convierte JSON arbitrario en una config usable, campo por campo: el campo válido se
- * conserva y el inválido o ausente cae en su propio default.
+ * conserva y el inválido o ausente cae en su propio default. Al normalizar se descartan los
+ * campos viejos (`phaseStyle`, `subagentStyle`), así que guardar escribe sólo `style`.
  */
 export function normalizeConfig(raw: unknown): HerdrStatusConfig {
 	const source = record(raw) ? raw : {};
 	return {
-		phaseStyle: readPhaseStyle(source.phaseStyle) ?? DEFAULT_CONFIG.phaseStyle,
-		subagentStyle: readSubagentStyle(source.subagentStyle) ?? DEFAULT_CONFIG.subagentStyle,
+		style: readStyleWithMigration(source),
 		changes: typeof source.changes === "boolean" ? source.changes : DEFAULT_CONFIG.changes,
 		name: readName(source.name) ?? DEFAULT_CONFIG.name,
 		showSubagent: typeof source.showSubagent === "boolean" ? source.showSubagent : DEFAULT_CONFIG.showSubagent,
@@ -189,7 +193,7 @@ export function effectiveConfig(config: HerdrStatusConfig, env: Env): EffectiveC
 	return {
 		config: {
 			...normalized,
-			phaseStyle: forced.has("phaseStyle") ? phaseStyle(env) : normalized.phaseStyle,
+			style: forced.has("style") ? styleFromEnv(env) : normalized.style,
 			changes: forced.has("changes") ? changesEnabled(env) : normalized.changes,
 		},
 		forced,
@@ -209,8 +213,7 @@ export function forcedOptions(env: Env): ForcedOptions {
 /** Valor visible de una opción. */
 export function optionValue(id: OptionId, config: HerdrStatusConfig): string {
 	if (id === "name") return config.name;
-	if (id === "phaseStyle") return config.phaseStyle;
-	if (id === "subagentStyle") return config.subagentStyle;
+	if (id === "style") return config.style;
 	return config[id] ? "on" : "off";
 }
 
@@ -230,12 +233,7 @@ export function optionRows(config: HerdrStatusConfig, forced: ForcedOptions = ne
  */
 export function cycleOption(config: HerdrStatusConfig, id: OptionId): HerdrStatusConfig {
 	const normalized = normalizeConfig(config);
-	if (id === "phaseStyle") {
-		return { ...normalized, phaseStyle: normalized.phaseStyle === "emoji" ? "brackets" : "emoji" };
-	}
-	if (id === "subagentStyle") {
-		return { ...normalized, subagentStyle: normalized.subagentStyle === "emoji" ? "arrow" : "emoji" };
-	}
+	if (id === "style") return { ...normalized, style: normalized.style === "emoji" ? "plain" : "emoji" };
 	if (id === "name") return normalized;
 	return { ...normalized, [id]: !normalized[id] };
 }
@@ -248,8 +246,7 @@ export function applyName(config: HerdrStatusConfig, name: string): HerdrStatusC
 /** Una línea con la config en efecto, para el aviso cuando no hay TUI. */
 export function describeConfig(config: HerdrStatusConfig): string {
 	return [
-		`phase ${config.phaseStyle === "emoji" ? "emoji" : "brackets"}`,
-		`subagent ${config.subagentStyle === "emoji" ? "emoji" : "arrow"}`,
+		`style ${config.style}`,
 		`changes ${config.changes ? "on" : "off"}`,
 		`$subagent ${config.showSubagent ? "on" : "off"}`,
 		`$jobs ${config.showJobs ? "on" : "off"}`,

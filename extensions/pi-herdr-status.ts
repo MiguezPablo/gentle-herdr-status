@@ -7,10 +7,11 @@
  * (`+120 -40`, the uncommitted lines of the session's git repo).
  *
  * Everything is configurable in a JSON file (`src/config.ts`) and, from the TUI, with
- * `/herdr-status`: the phase style (`[exploring]` or `🔍 exploring`), the subagent style
- * (`↳ explore` or `🧭 explore`), whether `$changes` is measured, whether the `$subagent`
- * and `$jobs` tokens are published at all, the panel name and whether the managed row in
- * Herdr's own `config.toml` carries colors. Saving the panel writes the file and applies
+ * `/herdr-status`: one `style` for the whole sidebar (`plain` or `emoji`, never per
+ * section), whether `$changes` is measured, whether the `$subagent` and `$jobs` tokens are
+ * published at all, the panel name and whether the managed row in Herdr's own `config.toml`
+ * carries colors. The plain style is `[exploring]`, `↳ explore` and `⏵ build`; the emoji one
+ * is `🔍 exploring`, `🧭 explore` and `🔄 build`. Saving the panel writes the file and applies
  * it at once: the extension rereads the config and republishes every token, without
  * waiting for the next Pi event. Escape cancels and writes nothing. The "Sync Herdr rows"
  * action saves the same draft and then writes the `pi` row inside a
@@ -19,7 +20,7 @@
  *
  * The environment still wins over the file for the two variables that existed before it
  * (`PI_HERDR_STATUS_STYLE`, `PI_HERDR_STATUS_CHANGES`); the panel shows those options as
- * forced and does not edit them.
+ * forced and does not edit them. `PI_HERDR_STATUS_STYLE` forces the single style.
  *
  * Only presentation metadata (`pane.report_metadata`). Pane state
  * (working/blocked/idle) and desktop notifications stay with Herdr's official
@@ -294,12 +295,12 @@ export function createExtension(deps: ExtensionDeps = {}) {
 		/** `$phase`: only while the agent works, read on the turn and tool events, never polled. */
 		const phase = (): PhaseRead => {
 			if (!working) return { raw: null, token: null };
-			if (sessionId === undefined) return { raw: null, token: phaseToken(undefined, settings.phaseStyle) };
+			if (sessionId === undefined) return { raw: null, token: phaseToken(undefined, settings.style) };
 			try {
 				const raw = readPhase(sessionId);
-				return { raw: raw ?? null, token: phaseToken(raw, settings.phaseStyle) };
+				return { raw: raw ?? null, token: phaseToken(raw, settings.style) };
 			} catch {
-				return { raw: null, token: phaseToken(undefined, settings.phaseStyle) };
+				return { raw: null, token: phaseToken(undefined, settings.style) };
 			}
 		};
 
@@ -337,10 +338,10 @@ export function createExtension(deps: ExtensionDeps = {}) {
 			// `$name` sale de la config y no depende del turno: el panel tiene nombre hasta el shutdown.
 			publisher?.set(NAME_TOKEN, settings.name);
 			// Un token apagado en la config nunca se publica con valor.
-			publisher?.set(TOKEN, settings.showSubagent ? tracker.label(settings.subagentStyle) : null);
+			publisher?.set(TOKEN, settings.showSubagent ? tracker.label(settings.style) : null);
 			publisher?.set(PHASE_TOKEN, read.token);
 			// `$jobs` tampoco depende del turno: un job sigue vivo sin turno en curso.
-			publisher?.set(JOBS_TOKEN, settings.showJobs ? jobs.label() : null);
+			publisher?.set(JOBS_TOKEN, settings.showJobs ? jobs.label(settings.style) : null);
 			// `$changes` se publica igual que `$jobs`; con el contador apagado siempre va limpio.
 			publisher?.set(CHANGES_TOKEN, changes?.token() ?? null);
 			return read;
@@ -431,7 +432,7 @@ export function createExtension(deps: ExtensionDeps = {}) {
 		};
 
 		pi.registerCommand("herdr-status", {
-			description: "pi-herdr-status settings: phase/subagent style, visible tokens, panel name and Herdr rows",
+			description: "pi-herdr-status settings: plain/emoji style, visible tokens, panel name and Herdr rows",
 			handler: async (_args: string, ctx: ExtensionCommandContext) => {
 				await openPanel(ctx);
 			},

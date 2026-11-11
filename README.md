@@ -26,19 +26,20 @@ gentle [exploring] +120 -40
   label, as one plain lowercase word in square brackets (`[exploring]`,
   `[implementing]`, `[checking]`, …), or `[working]` while no phase is reported. It
   disappears when the agent goes idle, so the row reads just `gentle`. With the emoji
-  phase style the same token is an emoji plus the word, without brackets (see
-  [Configuration](#configuration)).
+  style the same token is an emoji plus the word, without brackets (see
+  [Emoji style](#emoji-style)).
 - `$subagent` holds the `↳ ` prefix that marks the row as a subagent, the oldest
   running subagent's name without gentle-pi's `gentle-ai-` prefix (`gentle-ai-explore`
   shows as `explore`), plus how many other subagents run alongside it, in parentheses
   with a `+`, when two or more run, e.g. `↳ explore`, `↳ verify (+1)`. Names are sanitized
   to one line of at most 32 characters: terminal escape sequences (CSI colours and OSC
   titles) and control characters are dropped. It disappears when no subagent runs; the
-  arrow never shows on its own. The subagent style can replace the arrow with an emoji per
-  agent (`🧭 explore`, see [Configuration](#configuration)).
+  arrow never shows on its own. The emoji style replaces the arrow with an emoji per
+  agent (`🧭 explore`, see [Emoji style](#emoji-style)).
 - `$jobs` holds the `⏵ ` prefix and the oldest running job's label, plus how many other
   jobs run alongside it, in parentheses with a `+`, when two or more run, e.g.
-  `⏵ CI for PR 1834`, `⏵ logs (+1)`. A job keeps
+  `⏵ CI for PR 1834`, `⏵ logs (+1)`. With the emoji style the prefix is `🔄 `
+  (`🔄 CI for PR 1834`). A job keeps
   running without a turn, so this row is published while the agent is idle too; it is
   cleared when no job runs, on session start and on shutdown.
 - `$changes` is opt-in: only when it is turned on (in the config file, or with
@@ -63,8 +64,7 @@ before the file always win over it:
 
 ```json
 {
-  "phaseStyle": "brackets",
-  "subagentStyle": "arrow",
+  "style": "plain",
   "changes": false,
   "name": "gentle",
   "showSubagent": true,
@@ -73,15 +73,30 @@ before the file always win over it:
 }
 ```
 
+`style` is the one and only style switch: it applies to the whole sidebar at once, never
+per section (there is no `phaseStyle`, `subagentStyle` or `jobsStyle`).
+
+| Token | `plain` (default) | `emoji` |
+| --- | --- | --- |
+| `$phase` | `[exploring]` | `🔍 exploring` |
+| `$subagent` | `↳ explore (+1)` | `🧭 explore (+1)` |
+| `$jobs` | `⏵ build (+1)` | `🔄 build (+1)` |
+
+`$name` and `$changes` never change with the style.
+
 | Field | Values | Default | What it does |
 | --- | --- | --- | --- |
-| `phaseStyle` | `brackets`, `emoji` | `brackets` | `[exploring]` or `🔍 exploring`. |
-| `subagentStyle` | `arrow`, `emoji` | `arrow` | `↳ explore` or `🧭 explore` (see [Subagent emoji style](#subagent-emoji-style)). |
+| `style` | `plain`, `emoji` | `plain` | The style of `$phase`, `$subagent` and `$jobs` together (see [Emoji style](#emoji-style)). |
 | `changes` | `true`, `false` | `false` | Turns the `$changes` counter on; while it is off git never runs. |
 | `name` | text | `gentle` | The `$name` token. Sanitized to one line and capped at 32 characters; empty or blank reads `gentle`. |
 | `showSubagent` | `true`, `false` | `true` | `false` keeps `$subagent` unset, so its row disappears. |
 | `showJobs` | `true`, `false` | `true` | `false` keeps `$jobs` unset, so its row disappears. |
 | `colors` | `true`, `false` | `false` | Colors in the managed Herdr row (see [Sync Herdr rows](#sync-herdr-rows)). |
+
+A file written by an older version (with `phaseStyle` and `subagentStyle`) keeps working:
+if there is no valid `style`, `emoji` in either of those fields reads as `style: "emoji"`
+and anything else as `plain`. The next save writes only `style`, so the old fields
+disappear.
 
 A missing file, an unreadable one, invalid JSON or an invalid field never breaks the
 extension: that field falls back to its own default and the rest is kept. Saving writes
@@ -101,7 +116,7 @@ a variable forces, the mark `(forzado por PI_HERDR_STATUS_STYLE)` or
 | Key | Action |
 | --- | --- |
 | `↑` `↓` | Move between rows. |
-| `Enter` | Cycle the selected option (`brackets` ↔ `emoji`, `arrow` ↔ `emoji`, `on` ↔ `off`), start and confirm editing the panel name, or run the selected action (`Save changes`, `Sync Herdr rows`). |
+| `Enter` | Cycle the selected option (`plain` ↔ `emoji`, `on` ↔ `off`), start and confirm editing the panel name, or run the selected action (`Save changes`, `Sync Herdr rows`). |
 | `ctrl+s` | Save: write the file and apply it live. |
 | `Esc` | Cancel without writing. While editing the name it only leaves the edit, discarding the text. |
 
@@ -175,7 +190,7 @@ compare the reported value, first match wins.
 | Token | Style |
 | --- | --- |
 | `$name` | none: the panel name keeps the terminal's default color. |
-| `$phase` | one rule per phase, with `contains` and `ignore_case` so both phase styles match: exploring/researching blue, planning/deciding/authorizing mauve, implementing yellow, checking green, closing grey. |
+| `$phase` | one rule per phase, with `contains` and `ignore_case` so both styles match: exploring/researching blue, planning/deciding/authorizing mauve, implementing yellow, checking green, closing grey. |
 | `$changes` | a neutral foreground: one color cannot paint `+` green and `-` red inside the same token, so it is not attempted. |
 | `$subagent` | sky (`#89dceb`). |
 | `$jobs` | grey (`#7f849c`). |
@@ -192,24 +207,29 @@ To undo it by hand: delete the block from `# BEGIN pi-herdr-status …` through
 
 | Variable | Option | How it is read |
 | --- | --- | --- |
-| `PI_HERDR_STATUS_STYLE` | `phaseStyle` | Defined, it forces the style: `emoji` only for that exact value, anything else (including `EMOJI` or an empty value) is `brackets`. |
+| `PI_HERDR_STATUS_STYLE` | `style` | Defined, it forces the whole style: `emoji` only for that exact value, anything else (including `EMOJI` or an empty value) is `plain`. |
 | `PI_HERDR_STATUS_CHANGES` | `changes` | Defined, it forces the counter: only the exact value `1` turns it on. |
 
 When one of them is defined, the file never applies to that option, the panel marks the
 row as forced and saving keeps the stored value untouched. Options without a variable
 always follow the file.
 
-### `PI_HERDR_STATUS_STYLE`
+### Emoji style
 
-Only the exact value `emoji` changes anything, and only for `$phase`: a phase is
-recognized faster by its icon than by reading the word. Unset, empty or any other value
-(including `EMOJI`) keeps the bracketed form `[exploring]`.
+`style: "emoji"` turns the three tokens to their emoji shape at once, because the icon is
+recognized faster than reading the word; `style: "plain"` (the default) is the shape
+above. There is no style per section: one switch, the whole sidebar.
 
 ```bash
 PI_HERDR_STATUS_STYLE=emoji pi
 ```
 
-The row then reads `gentle · 🔍 exploring` instead of `gentle · [exploring]`:
+The variable forces the same single style and wins over the file. Only the exact value
+`emoji` changes anything; unset, empty or any other value (including `EMOJI`) keeps the
+plain shape, and the panel marks the row `(forzado por PI_HERDR_STATUS_STYLE)`.
+
+The row then reads `gentle · 🔍 exploring · 🧭 explore · 🔄 build` instead of
+`gentle · [exploring] · ↳ explore · ⏵ build`:
 
 | Phase | Emoji | Token |
 | --- | --- | --- |
@@ -225,17 +245,15 @@ The row then reads `gentle · 🔍 exploring` instead of `gentle · [exploring]`
 
 Every emoji is a single codepoint (no `U+FE0F` variation selector), so it is one glyph,
 but some fonts render it two columns wide and some one: the row can shift by a cell
-between terminals or themes. `$subagent`, `$jobs` and `$name` never change, and neither
-does anything else about the phase: the word is still lowercase, untrimmed input is
-still normalized, the token still clears when the agent goes idle.
+between terminals or themes. Nothing else about the phase changes: the word is still
+lowercase, untrimmed input is still normalized, the token still clears when the agent
+goes idle.
 
-The style is the `phaseStyle` field of the config file; `PI_HERDR_STATUS_STYLE` forces it
-and wins over the file.
+### Subagent and jobs emoji style
 
-### Subagent emoji style
-
-With `subagentStyle: "emoji"` the `↳ ` prefix of `$subagent` becomes one emoji per agent,
-chosen from the name after dropping gentle-pi's `gentle-ai-` prefix:
+With `style: "emoji"` the `↳ ` prefix of `$subagent` becomes one emoji per agent, chosen
+from the name after dropping gentle-pi's `gentle-ai-` prefix, and the `⏵ ` prefix of
+`$jobs` becomes `🔄 `:
 
 | Agent | Emoji | Token |
 | --- | --- | --- |
@@ -243,11 +261,14 @@ chosen from the name after dropping gentle-pi's `gentle-ai-` prefix:
 | `worker` | 🔨 | `🔨 worker` |
 | `verify` | 🧪 | `🧪 verify` |
 | any other | 🤖 | `🤖 reviewer` |
+| a job | 🔄 | `🔄 build` |
 
-Nothing else changes: the counter keeps its parentheses (`🧭 explore (+1)`), the name is
-still sanitized and capped at 32 characters, and only the exact agent name (`explore`, not
-`explore-x`) has its own emoji. Every emoji is a single codepoint, with no `U+FE0F`. With
-`subagentStyle: "arrow"` the row is byte for byte the `↳ explore` it always was.
+Nothing else changes: the counter keeps its parentheses (`🧭 explore (+1)`, `🔄 build
+(+1)`), the names are still sanitized and capped at 32 characters, and only the exact
+agent name (`explore`, not `explore-x`) has its own emoji. Every emoji is a single
+codepoint, with no `U+FE0F`; the jobs prefix is exactly `U+1F504`. With `style: "plain"`
+the rows are byte for byte the `↳ explore` and `⏵ build` they always were. `$name` and
+`$changes` are not a style: they never change.
 
 ### `PI_HERDR_STATUS_DEBUG`
 
@@ -379,11 +400,13 @@ into the managed block.
   without `get`, one that throws, or a value outside gentle-pi's phase list all fall
   back to `[working]`; nothing is published while idle. Since that registry is an
   internal, `PI_HERDR_STATUS_DEBUG` logs what each event saw (see [Debugging](#debugging)).
-- The phase style and the subagent style are configuration, with the environment winning
-  for the phase: `phaseToken(value, phaseStyle)` renders `<emoji> <phase>` instead of
-  `[<phase>]`, and `SubagentTracker.label(subagentStyle)` renders the emoji prefix instead
-  of `↳ `. Both defaults (and the default arguments of those functions) are the previous
-  shapes, so no other token and no other behaviour changes.
+- The style is one configuration switch for the whole sidebar, with the environment
+  winning over the file: `phaseToken(value, style)` renders `<emoji> <phase>` instead of
+  `[<phase>]`, `SubagentTracker.label(style)` renders the per-agent emoji instead of `↳ `,
+  and `JobsTracker.label(style)` renders `🔄 ` instead of `⏵ `. The default (`plain`, and
+  the default argument of those three functions) is the previous shape, so no other token
+  and no other behaviour changes. An old file with `phaseStyle`/`subagentStyle` is read as
+  `plain`/`emoji` and rewritten with only `style` the next time it is saved.
 - `$changes` is opt-in too: turning it on (file or `PI_HERDR_STATUS_CHANGES=1`) creates a
   counter that measures the session's `cwd` on the events the extension already handles
   (`session_start`, `agent_start`, every `tool_result`, the jobs event and `agent_end`)

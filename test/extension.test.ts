@@ -481,7 +481,7 @@ test("S10: $name shows gentle from session start, stays while idle and clears on
 	assert.equal(names().at(-1), null, "shutdown leaves no name behind");
 });
 
-test("S11: PI_HERDR_STATUS_STYLE=emoji changes only $phase", async () => {
+test("S17: PI_HERDR_STATUS_STYLE=emoji changes the phase, the subagent and the jobs at once", async () => {
 	const { fire, emit, phases, tokens, names, jobs } = load(
 		{ ...HERDR_ENV, PI_HERDR_STATUS_STYLE: "emoji" },
 		{ readPhase: () => "exploring" },
@@ -489,18 +489,36 @@ test("S11: PI_HERDR_STATUS_STYLE=emoji changes only $phase", async () => {
 	await fire("session_start", { reason: "startup" });
 	await fire("agent_start", { type: "agent_start" });
 	assert.equal(phases().at(-1), "🔍 exploring", "emoji and the word, no brackets");
-	assert.equal(names().at(-1), PANEL_NAME, "$name does not change");
+	assert.equal(names().at(-1), PANEL_NAME, "$name does not change: it is not a style");
 	await fire("tool_call", { toolCallId: "c1", toolName: "subagent_run", input: { agent: "explore", task: "x" } });
 	await fire("tool_result", {
 		toolCallId: "c1", toolName: "subagent_run",
 		details: { gentleAgents: { taskId: "t1", agent: "explore", status: "running" } },
 	});
-	assert.equal(tokens().at(-1), "↳ explore", "$subagent keeps its arrow and its form");
+	assert.equal(tokens().at(-1), "🧭 explore", "the subagent row takes the same style");
 	await emit(JOBS_SIDEBAR_EVENT, jobsSnapshot("s1", [job("j1", "CI for PR 1834", 10)]));
-	assert.equal(jobs().at(-1), "⏵ CI for PR 1834", "$jobs is untouched");
+	assert.equal(jobs().at(-1), "🔄 CI for PR 1834", "and so does the jobs row, with 🔄");
 	assert.equal(phases().at(-1), "🔍 exploring", "the phase keeps its emoji");
 	await fire("agent_end", { type: "agent_end", messages: [] });
 	assert.equal(phases().at(-1), null, "the phase is still cleared when idle");
+});
+
+test("S17/PRESERVE: the file style is overridden by the variable, globally", async () => {
+	const configPath = freshConfigPath();
+	saveConfig(configPath, { ...DEFAULT_CONFIG, style: "plain" });
+	const { fire, last } = load(
+		{ ...HERDR_ENV, PI_HERDR_STATUS_STYLE: "EMOJI" },
+		{ configPath, readPhase: () => "exploring" },
+	);
+	await fire("session_start", { reason: "startup" });
+	await fire("agent_start", { type: "agent_start" });
+	assert.equal(last()!.tokens[PHASE_TOKEN], "[exploring]", "any other value forces the plain style");
+	const emojiFile = freshConfigPath();
+	saveConfig(emojiFile, { ...DEFAULT_CONFIG, style: "emoji" });
+	const second = load(HERDR_ENV, { configPath: emojiFile, readPhase: () => "exploring" });
+	await second.fire("session_start", { reason: "startup" });
+	await second.fire("agent_start", { type: "agent_start" });
+	assert.equal(second.last()!.tokens[PHASE_TOKEN], "🔍 exploring", "without the variable the file decides");
 });
 
 test("PRESERVE: without PI_HERDR_STATUS_STYLE, or with any other value, $phase keeps its brackets", async () => {
@@ -690,21 +708,36 @@ test("PRESERVE: with $changes on, $phase, $subagent, $jobs and $name keep their 
 	}), "the other four tokens read exactly as before");
 });
 
-test("S13: a stored config drives every token without any environment variable", async () => {
+test("S13/S17: a stored config drives every token without any environment variable", async () => {
 	const configPath = freshConfigPath();
 	saveConfig(configPath, {
 		...DEFAULT_CONFIG,
-		phaseStyle: "emoji",
-		subagentStyle: "emoji",
+		style: "emoji",
 		name: "side",
 	});
-	const { fire, last } = load(HERDR_ENV, { configPath, readPhase: () => "implementing" });
+	const { fire, emit, last } = load(HERDR_ENV, { configPath, readPhase: () => "implementing" });
 	await fire("session_start", { reason: "startup" });
 	assert.equal(last()!.tokens[NAME_TOKEN], "side", "$name comes from the file");
 	await fire("agent_start", { type: "agent_start" });
-	assert.equal(last()!.tokens[PHASE_TOKEN], "🔨 implementing", "the stored phase style is the emoji one");
 	await fire("tool_call", { toolCallId: "c1", toolName: "subagent_run", input: { agent: "explore", task: "x" } });
-	assert.equal(last()!.tokens[TOKEN], "🧭 explore", "the stored subagent style is the emoji one");
+	await emit(JOBS_SIDEBAR_EVENT, jobsSnapshot("s1", [job("j1", "CI for PR 1834", 10)]));
+	assert.deepEqual(last()!.tokens, tokensOf({
+		[NAME_TOKEN]: "side",
+		[PHASE_TOKEN]: "🔨 implementing",
+		[TOKEN]: "🧭 explore",
+		[JOBS_TOKEN]: "🔄 CI for PR 1834",
+	}), "one style, the three tokens at once");
+});
+
+test("S17: the emoji style leaves $name and $changes exactly as they were", async () => {
+	const configPath = freshConfigPath();
+	saveConfig(configPath, { ...DEFAULT_CONFIG, style: "emoji", name: "side" });
+	const { fire, last } = load(CHANGES_ON, { configPath, runGit: fakeChangesGit("5\t0\ta.ts\n").run });
+	await fire("session_start", { reason: "startup" });
+	await fire("agent_start", { type: "agent_start" });
+	assert.equal(last()!.tokens[NAME_TOKEN], "side", "the panel name is not a style");
+	assert.equal(last()!.tokens[CHANGES_TOKEN], "+5 -0", "the changes token is not a style either");
+	assert.equal(last()!.tokens[PHASE_TOKEN], "⏳ working", "the phase fallback is the emoji one");
 });
 
 test("S13: showSubagent=false keeps $subagent null and showJobs=false keeps $jobs null", async () => {
@@ -845,9 +878,9 @@ test("S15: without a TUI the command reports the effective config and the file p
 	});
 	assert.equal(notifications.length, 1);
 	const [report] = notifications;
-	assert.match(report.message, /brackets/u, "the phase style in effect");
-	assert.match(report.message, /arrow/u, "the subagent style in effect");
+	assert.match(report.message, /style plain/u, "the style in effect");
 	assert.match(report.message, /gentle/u, "the panel name in effect");
+	assert.ok(!/brackets|arrow/u.test(report.message), "the old per-section styles are gone");
 	assert.ok(report.message.includes(configPath), "the config file path");
 	assert.equal(existsSync(configPath), false, "nothing is written without a TUI");
 });
@@ -858,13 +891,13 @@ test("S15: saving writes the JSON and applies it live, republishing the tokens",
 	await fire("tool_call", { toolCallId: "c1", toolName: "subagent_run", input: { agent: "explore", task: "x" } });
 	assert.equal(last()!.tokens[TOKEN], "↳ explore");
 	const { panel, done } = openPanel(commands);
-	moveTo(panel(), "subagentStyle");
+	moveTo(panel(), "style");
 	panel().handleInput(KEYS.confirm);
-	assert.ok(panel().render(80).some((line) => line.includes("Subagent style: emoji")), "the draft shows the new value");
+	assert.ok(panel().render(80).some((line) => line.includes("Style: emoji")), "the draft shows the new value");
 	moveToSave(panel());
 	panel().handleInput(KEYS.confirm);
 	await done;
-	assert.deepEqual(JSON.parse(readFileSync(configPath, "utf8")), { ...DEFAULT_CONFIG, subagentStyle: "emoji" });
+	assert.deepEqual(JSON.parse(readFileSync(configPath, "utf8")), { ...DEFAULT_CONFIG, style: "emoji" });
 	assert.equal(last()!.tokens[TOKEN], "🧭 explore", "the sidebar changes right away, without waiting for an event");
 });
 
@@ -873,12 +906,41 @@ test("S15: Esc cancels without writing and without touching the tokens", async (
 	await fire("session_start", { reason: "startup" });
 	const published = sent.length;
 	const { panel, done } = openPanel(commands);
-	moveTo(panel(), "subagentStyle");
+	moveTo(panel(), "style");
 	panel().handleInput(KEYS.confirm);
 	panel().handleInput(KEYS.cancel);
 	await done;
 	assert.equal(existsSync(configPath), false, "nothing is written");
 	assert.equal(sent.length, published, "and nothing is republished");
+});
+
+test("S17: the panel has one Style row and no per-section style rows", async () => {
+	const { commands } = load();
+	const { panel, done } = openPanel(commands);
+	const lines = panel().render(80).join("\n");
+	assert.match(lines, /Style: plain/u, "one row, plain by default");
+	assert.ok(!/Phase style/u.test(lines), "the phase row is gone");
+	assert.ok(!/Subagent style/u.test(lines), "and so is the subagent row");
+	assert.ok(!/Jobs style/u.test(lines), "and there is no jobs row either");
+	panel().handleInput(KEYS.cancel);
+	await done;
+});
+
+test("S17: saving a legacy file from the panel writes only the new style field", async () => {
+	const configPath = freshConfigPath();
+	mkdirSync(dirname(configPath), { recursive: true });
+	writeFileSync(configPath, JSON.stringify({ phaseStyle: "emoji", subagentStyle: "arrow", showJobs: false }));
+	const { commands, fire, last } = load(HERDR_ENV, { configPath, readPhase: () => "implementing" });
+	await fire("session_start", { reason: "startup" });
+	await fire("agent_start", { type: "agent_start" });
+	assert.equal(last()!.tokens[PHASE_TOKEN], "🔨 implementing", "the legacy emoji file already reads as the emoji style");
+	const { panel, done } = openPanel(commands);
+	assert.ok(panel().render(80).some((line) => line.includes("Style: emoji")), "the panel shows the migrated style");
+	panel().handleInput(SAVE_KEY);
+	await done;
+	const stored: Record<string, unknown> = JSON.parse(readFileSync(configPath, "utf8"));
+	assert.equal(stored.style, "emoji");
+	assert.ok(!("phaseStyle" in stored) && !("subagentStyle" in stored), "the old fields are discarded");
 });
 
 test("S15: the panel name is text, edited in place and saved like any other option", async () => {
@@ -912,7 +974,7 @@ test("S15: an option forced by a variable is marked and cannot be changed from t
 	panel().handleInput(KEYS.confirm);
 	panel().handleInput(SAVE_KEY);
 	await done;
-	assert.equal(JSON.parse(readFileSync(configPath, "utf8")).phaseStyle, "brackets", "the stored value is untouched");
+	assert.equal(JSON.parse(readFileSync(configPath, "utf8")).style, "plain", "the stored value is untouched");
 	assert.equal(last()!.tokens[PHASE_TOKEN], "🔍 exploring", "the variable still forces the emoji style");
 });
 

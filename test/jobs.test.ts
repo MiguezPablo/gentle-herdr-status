@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { JOBS_PREFIX, JobsTracker } from "../src/jobs.ts";
+import { JOBS_EMOJI, JOBS_PREFIX, JobsTracker } from "../src/jobs.ts";
 
 /** Un job corriendo: gentle-pi lo publica sin `status`. */
 const running = (id: string, label: string, startedAt: number) => ({ id, label, startedAt });
@@ -107,4 +107,24 @@ test("reset drops every job", () => {
 	tracker.snapshot(snapshot("s1", [running("j1", "logs", 10)]), "s1");
 	tracker.reset();
 	assert.equal(tracker.label(), null);
+});
+
+test("S17: the emoji style prefixes the jobs with 🔄 and changes nothing else", () => {
+	const tracker = new JobsTracker();
+	tracker.snapshot(snapshot("s1", [running("j1", "build", 10)]), "s1");
+	assert.equal(tracker.label("emoji"), "🔄 build");
+	tracker.snapshot(snapshot("s1", [running("j2", "dev server", 20), running("j1", "build", 10)]), "s1");
+	assert.equal(tracker.label("emoji"), "🔄 build (+1)", "the counter keeps its parentheses");
+	tracker.snapshot(snapshot("s1", [running("j1", "  npm\u0007test  ", 10)]), "s1");
+	assert.equal(tracker.label("emoji"), "🔄 npm test", "the label is sanitized as with the arrow");
+	assert.equal(tracker.label("plain"), `${JOBS_PREFIX}npm test`, "the explicit plain style equals the default");
+	assert.equal(tracker.label(), `${JOBS_PREFIX}npm test`, "no style is the plain one");
+});
+
+test("S17: the jobs emoji is U+1F504, one codepoint and without U+FE0F", () => {
+	assert.equal(JOBS_EMOJI, "\u{1F504}", "the counterclockwise arrows, exactly U+1F504");
+	assert.equal([...JOBS_EMOJI].length, 1, "one codepoint");
+	assert.ok(!JOBS_EMOJI.includes("\uFE0F"), "no variation selector");
+	assert.equal(`${JOBS_EMOJI} `.length, 3, "the emoji plus one space, in UTF-16 units");
+	assert.equal([...`${JOBS_EMOJI} `].length, 2, "the emoji plus one space, in codepoints");
 });

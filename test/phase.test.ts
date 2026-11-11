@@ -8,9 +8,9 @@ import {
 	STYLE_ENV,
 	WORKING_EMOJI,
 	WORKING_PHASE,
-	phaseStyle,
 	phaseToken,
 	readOddPhase,
+	styleFromEnv,
 } from "../src/phase.ts";
 
 /** gentle-pi's registry key; the extension reads it through the same symbol. */
@@ -68,23 +68,24 @@ test("S11: every emoji is a single codepoint, with no U+FE0F variation selector"
 	}
 });
 
-test("S11: only the exact value emoji opts in; unset or any other value keeps the brackets", () => {
+test("S11/S17: only the exact value emoji opts in; unset or any other value is plain", () => {
 	assert.equal(STYLE_ENV, "PI_HERDR_STATUS_STYLE");
 	assert.equal(EMOJI_STYLE, "emoji");
-	assert.equal(phaseStyle({ [STYLE_ENV]: "emoji" }), "emoji");
-	assert.equal(phaseStyle({}), "brackets", "no variable at all");
-	for (const value of [undefined, "", "EMOJI", " emoji", "emoji ", "1", "true", "brackets"]) {
-		assert.equal(phaseStyle({ [STYLE_ENV]: value }), "brackets", JSON.stringify(value));
+	assert.equal(styleFromEnv({ [STYLE_ENV]: "emoji" }), "emoji");
+	assert.equal(styleFromEnv({}), "plain", "no variable at all");
+	for (const value of [undefined, "", "EMOJI", " emoji", "emoji ", "1", "true", "plain", "brackets"]) {
+		assert.equal(styleFromEnv({ [STYLE_ENV]: value }), "plain", JSON.stringify(value));
 	}
 });
 
 test("PRESERVE: without the variable the bracketed token is byte-for-byte the same", () => {
 	for (const phase of ODD_PHASES) {
 		assert.equal(phaseToken(phase), `[${phase}]`, "the default style is the bracketed one");
-		assert.equal(phaseToken(phase, phaseStyle({})), `[${phase}]`);
-		assert.equal(phaseToken(phase, phaseStyle({ [STYLE_ENV]: "emoji" })), `${PHASE_EMOJIS[phase]} ${phase}`);
+		assert.equal(phaseToken(phase, "plain"), `[${phase}]`, "the explicit plain style equals the default");
+		assert.equal(phaseToken(phase, styleFromEnv({})), `[${phase}]`);
+		assert.equal(phaseToken(phase, styleFromEnv({ [STYLE_ENV]: "emoji" })), `${PHASE_EMOJIS[phase]} ${phase}`);
 	}
-	assert.equal(phaseToken(undefined, phaseStyle({ [STYLE_ENV]: "Emoji" })), "[working]", "the value is case sensitive");
+	assert.equal(phaseToken(undefined, styleFromEnv({ [STYLE_ENV]: "Emoji" })), "[working]", "the value is case sensitive");
 });
 
 test("a missing or unknown phase falls back to [working]", () => {
