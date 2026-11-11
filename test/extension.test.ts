@@ -448,6 +448,39 @@ test("S10: $name shows gentle from session start, stays while idle and clears on
 	assert.equal(names().at(-1), null, "shutdown leaves no name behind");
 });
 
+test("S11: PI_HERDR_STATUS_STYLE=emoji changes only $phase", async () => {
+	const { fire, emit, phases, tokens, names, jobs } = load(
+		{ ...HERDR_ENV, PI_HERDR_STATUS_STYLE: "emoji" },
+		{ readPhase: () => "exploring" },
+	);
+	await fire("session_start", { reason: "startup" });
+	await fire("agent_start", { type: "agent_start" });
+	assert.equal(phases().at(-1), "🔍 exploring", "emoji and the word, no brackets");
+	assert.equal(names().at(-1), PANEL_NAME, "$name does not change");
+	await fire("tool_call", { toolCallId: "c1", toolName: "subagent_run", input: { agent: "explore", task: "x" } });
+	await fire("tool_result", {
+		toolCallId: "c1", toolName: "subagent_run",
+		details: { gentleAgents: { taskId: "t1", agent: "explore", status: "running" } },
+	});
+	assert.equal(tokens().at(-1), "↳ explore", "$subagent keeps its arrow and its form");
+	await emit(JOBS_SIDEBAR_EVENT, jobsSnapshot("s1", [job("j1", "CI for PR 1834", 10)]));
+	assert.equal(jobs().at(-1), "⏵ CI for PR 1834", "$jobs is untouched");
+	assert.equal(phases().at(-1), "🔍 exploring", "the phase keeps its emoji");
+	await fire("agent_end", { type: "agent_end", messages: [] });
+	assert.equal(phases().at(-1), null, "the phase is still cleared when idle");
+});
+
+test("PRESERVE: without PI_HERDR_STATUS_STYLE, or with any other value, $phase keeps its brackets", async () => {
+	for (const style of [undefined, "EMOJI", " emoji", "emoji ", "squares"]) {
+		const env = { ...HERDR_ENV } as Record<string, string | undefined>;
+		env.PI_HERDR_STATUS_STYLE = style;
+		const { fire, phases } = load(env, { readPhase: () => "checking" });
+		await fire("session_start", { reason: "startup" });
+		await fire("agent_start", { type: "agent_start" });
+		assert.equal(phases().at(-1), "[checking]", JSON.stringify(style));
+	}
+});
+
 test("PRESERVE: $phase stays clean while idle and $subagent is untouched", async () => {
 	const { fire, emit, phases, tokens } = load(HERDR_ENV, { readPhase: () => "implementing" });
 	await fire("session_start", { reason: "startup" });

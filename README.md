@@ -16,7 +16,9 @@ gentle [exploring]
 - `$phase` follows the orchestrator: the ODD phase gentle-pi shows in its own prompt
   label, as one plain lowercase word in square brackets (`[exploring]`,
   `[implementing]`, `[checking]`, …), or `[working]` while no phase is reported. It
-  disappears when the agent goes idle, so the row reads just `gentle`.
+  disappears when the agent goes idle, so the row reads just `gentle`. With
+  `PI_HERDR_STATUS_STYLE=emoji` the same token is an emoji plus the word, without
+  brackets (see [Configuration](#configuration)).
 - `$subagent` holds the `↳ ` prefix that marks the row as a subagent, the oldest
   running subagent's name without gentle-pi's `gentle-ai-` prefix (`gentle-ai-explore`
   shows as `explore`), plus how many other subagents run alongside it, in parentheses
@@ -29,6 +31,45 @@ gentle [exploring]
   `⏵ CI for PR 1834`, `⏵ logs (+1)`. A job keeps
   running without a turn, so this row is published while the agent is idle too; it is
   cleared when no job runs, on session start and on shutdown.
+
+## Configuration
+
+Everything is opt-in, so with no variables set the sidebar looks exactly as described
+above. All of them are read from the environment Pi starts with.
+
+### `PI_HERDR_STATUS_STYLE`
+
+Only the exact value `emoji` changes anything, and only for `$phase`: a phase is
+recognized faster by its icon than by reading the word. Unset, empty or any other value
+(including `EMOJI`) keeps the bracketed form `[exploring]`.
+
+```bash
+PI_HERDR_STATUS_STYLE=emoji pi
+```
+
+The row then reads `gentle · 🔍 exploring` instead of `gentle · [exploring]`:
+
+| Phase | Emoji | Token |
+| --- | --- | --- |
+| `authorizing` | 🔐 | `🔐 authorizing` |
+| `exploring` | 🔍 | `🔍 exploring` |
+| `researching` | 📚 | `📚 researching` |
+| `deciding` | 🤔 | `🤔 deciding` |
+| `planning` | 📝 | `📝 planning` |
+| `implementing` | 🔨 | `🔨 implementing` |
+| `checking` | ✅ | `✅ checking` |
+| `closing` | 🏁 | `🏁 closing` |
+| no phase (`working`) | ⏳ | `⏳ working` |
+
+Every emoji is a single codepoint (no `U+FE0F` variation selector), so it is one glyph,
+but some fonts render it two columns wide and some one: the row can shift by a cell
+between terminals or themes. `$subagent`, `$jobs` and `$name` never change, and neither
+does anything else about the phase: the word is still lowercase, untrimmed input is
+still normalized, the token still clears when the agent goes idle.
+
+### `PI_HERDR_STATUS_DEBUG`
+
+Opt-in diagnostic for `$phase`; see [Debugging](#debugging).
 
 ## What it does not do
 
@@ -112,6 +153,10 @@ is unset is hidden.
   without `get`, one that throws, or a value outside gentle-pi's phase list all fall
   back to `[working]`; nothing is published while idle. Since that registry is an
   internal, `PI_HERDR_STATUS_DEBUG` logs what each event saw (see [Debugging](#debugging)).
+- The phase style is opt-in: `PI_HERDR_STATUS_STYLE=emoji` is read from the extension's
+  own `env` once, and then `phaseToken(value, style)` renders `<emoji> <phase>` instead
+  of `[<phase>]`. The default argument is still the bracketed form, so no other token and
+  no other behaviour changes.
 - All tokens share source `pi-herdr-status` and one `seq` stream (Herdr orders reports
   per source by `seq`), and every report carries all of them.
 - Every token carries a 90 s TTL and is refreshed every 30 s while shown, so they expire
@@ -139,7 +184,6 @@ never reported.
 
 The variable is unset by default and then nothing is written. Write failures are ignored,
 so the diagnostic never affects the sidebar.
-
 ## Development
 
 ```bash

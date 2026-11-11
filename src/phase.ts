@@ -16,7 +16,14 @@
  * expose `get`, a future one may change the shape, or it may throw. Every one of those
  * cases reads as "no phase available" and the sidebar falls back to `working`, so the
  * row never shows a phase that is not actually running.
+ *
+ * Style is opt-in: with `PI_HERDR_STATUS_STYLE=emoji` the phase token is an emoji plus
+ * the word (`🔍 exploring`) instead of the bracketed word (`[exploring]`), because the
+ * shape is recognized faster than the word. Anything else, including the variable being
+ * unset, keeps the bracketed form byte for byte. Only `$phase` changes: `$subagent`,
+ * `$jobs` and `$name` are left alone.
  */
+import type { Env } from "./herdr.ts";
 
 /** Phases gentle-pi cycles through; each is shown verbatim as one lowercase word, bracketed. */
 export const ODD_PHASES = [
@@ -32,6 +39,38 @@ export const ODD_PHASES = [
 
 /** Shown while the agent works but gentle-pi reports no usable phase. */
 export const WORKING_PHASE = "working";
+
+/** Opt-in switch for the emoji style. */
+export const STYLE_ENV = "PI_HERDR_STATUS_STYLE";
+/** The only value that turns the emoji style on; any other value keeps the brackets. */
+export const EMOJI_STYLE = "emoji";
+
+/**
+ * One single-codepoint emoji per phase, with no U+FE0F variation selector so every
+ * terminal renders one glyph. It is a fallback shape, not a replacement: the word is
+ * still there, because an emoji alone is ambiguous (a hammer is not "implementing").
+ */
+export const PHASE_EMOJIS: Readonly<Record<string, string>> = {
+	authorizing: "🔐",
+	exploring: "🔍",
+	researching: "📚",
+	deciding: "🤔",
+	planning: "📝",
+	implementing: "🔨",
+	checking: "✅",
+	closing: "🏁",
+};
+
+/** Emoji of the fallback phase (`working`): the agent works, no phase was reported. */
+export const WORKING_EMOJI = "⏳";
+
+/** How the phase token is rendered: `[exploring]` by default, `🔍 exploring` when opted in. */
+export type PhaseStyle = "brackets" | "emoji";
+
+/** The style this `env` asks for: only the exact value `emoji` opts in. */
+export function phaseStyle(env: Env): PhaseStyle {
+	return env[STYLE_ENV] === EMOJI_STYLE ? "emoji" : "brackets";
+}
 
 /** gentle-pi's registry key; the same symbol is the only bridge across loaders. */
 const REGISTRY = Symbol.for("gentle-pi.odd-phase-registry");
@@ -52,9 +91,14 @@ export const readOddPhase: PhaseReader = (sessionId) => {
 	}
 };
 
-/** Sidebar token for a reported phase: `[<known ODD phase>]`, else `[working]`. */
-export function phaseToken(value: unknown): string {
-	return `[${phaseWord(value)}]`;
+/**
+ * Sidebar token for a reported phase: `[<known ODD phase>]` (else `[working]`), or
+ * `<emoji> <phase>` (else `⏳ working`) when the emoji style is on.
+ */
+export function phaseToken(value: unknown, style: PhaseStyle = "brackets"): string {
+	const word = phaseWord(value);
+	if (style === "emoji") return `${PHASE_EMOJIS[word] ?? WORKING_EMOJI} ${word}`;
+	return `[${word}]`;
 }
 
 /** The bare phase word, so the brackets are added in exactly one place. */

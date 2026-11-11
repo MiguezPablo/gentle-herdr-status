@@ -1,7 +1,17 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { ODD_PHASES, WORKING_PHASE, phaseToken, readOddPhase } from "../src/phase.ts";
+import {
+	EMOJI_STYLE,
+	ODD_PHASES,
+	PHASE_EMOJIS,
+	STYLE_ENV,
+	WORKING_EMOJI,
+	WORKING_PHASE,
+	phaseStyle,
+	phaseToken,
+	readOddPhase,
+} from "../src/phase.ts";
 
 /** gentle-pi's registry key; the extension reads it through the same symbol. */
 const REGISTRY = Symbol.for("gentle-pi.odd-phase-registry");
@@ -24,6 +34,57 @@ test("every ODD phase is shown verbatim in square brackets, without ellipsis", (
 		assert.equal(phaseToken(`${phase}…`), `[${phase}]`, "no ellipsis in the sidebar");
 		assert.equal(phaseToken(` ${phase.toUpperCase()} `), `[${phase}]`);
 	}
+});
+
+test("S11: with the emoji style each ODD phase is emoji + word, without brackets", () => {
+	const expected: Record<string, string> = {
+		authorizing: "🔐",
+		exploring: "🔍",
+		researching: "📚",
+		deciding: "🤔",
+		planning: "📝",
+		implementing: "🔨",
+		checking: "✅",
+		closing: "🏁",
+	};
+	assert.deepEqual(PHASE_EMOJIS, expected, "the map is exactly the agreed one");
+	for (const phase of ODD_PHASES) {
+		assert.equal(phaseToken(phase, "emoji"), `${expected[phase]} ${phase}`);
+		assert.equal(phaseToken(`${phase.toUpperCase()}…`, "emoji"), `${expected[phase]} ${phase}`, "trim, lowercase and ellipsis are unchanged");
+	}
+});
+
+test("S11: an unknown or missing phase falls back to the hourglass and working", () => {
+	for (const value of [undefined, null, "", "dancing", "exploring now", 3, {}, []]) {
+		assert.equal(phaseToken(value, "emoji"), `${WORKING_EMOJI} ${WORKING_PHASE}`, String(value));
+	}
+	assert.equal(WORKING_EMOJI, "⏳", "the fallback emoji is the hourglass");
+});
+
+test("S11: every emoji is a single codepoint, with no U+FE0F variation selector", () => {
+	for (const emoji of [...Object.values(PHASE_EMOJIS), WORKING_EMOJI]) {
+		assert.ok(!emoji.includes("\uFE0F"), `${emoji} must not carry the variation selector`);
+		assert.equal([...emoji].length, 1, `${emoji} is one codepoint`);
+	}
+});
+
+test("S11: only the exact value emoji opts in; unset or any other value keeps the brackets", () => {
+	assert.equal(STYLE_ENV, "PI_HERDR_STATUS_STYLE");
+	assert.equal(EMOJI_STYLE, "emoji");
+	assert.equal(phaseStyle({ [STYLE_ENV]: "emoji" }), "emoji");
+	assert.equal(phaseStyle({}), "brackets", "no variable at all");
+	for (const value of [undefined, "", "EMOJI", " emoji", "emoji ", "1", "true", "brackets"]) {
+		assert.equal(phaseStyle({ [STYLE_ENV]: value }), "brackets", JSON.stringify(value));
+	}
+});
+
+test("PRESERVE: without the variable the bracketed token is byte-for-byte the same", () => {
+	for (const phase of ODD_PHASES) {
+		assert.equal(phaseToken(phase), `[${phase}]`, "the default style is the bracketed one");
+		assert.equal(phaseToken(phase, phaseStyle({})), `[${phase}]`);
+		assert.equal(phaseToken(phase, phaseStyle({ [STYLE_ENV]: "emoji" })), `${PHASE_EMOJIS[phase]} ${phase}`);
+	}
+	assert.equal(phaseToken(undefined, phaseStyle({ [STYLE_ENV]: "Emoji" })), "[working]", "the value is case sensitive");
 });
 
 test("a missing or unknown phase falls back to [working]", () => {

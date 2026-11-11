@@ -5,6 +5,10 @@
  * `[working]`), the `$subagent` token (`↳ explore` or `↳ worker (+2)`) and the `$jobs`
  * token (`⏵ CI for PR 1834` or `⏵ logs (+1)`).
  *
+ * With `PI_HERDR_STATUS_STYLE=emoji` the `$phase` token is shown as an emoji plus the
+ * phase word (`🔍 exploring`) instead of the bracketed word (`[exploring]`); every other
+ * token and the whole default behaviour stay the same.
+ *
  * Only presentation metadata (`pane.report_metadata`). Pane state
  * (working/blocked/idle) and desktop notifications stay with Herdr's official
  * Pi integration and Herdr's own [ui.toast]/[ui.sound] settings, so this
@@ -27,7 +31,7 @@ import {
 	type Send,
 } from "../src/herdr.ts";
 import { JOBS_SIDEBAR_EVENT, JobsTracker } from "../src/jobs.ts";
-import { phaseToken, readOddPhase, type PhaseReader } from "../src/phase.ts";
+import { phaseStyle, phaseToken, readOddPhase, type PhaseReader, type PhaseStyle } from "../src/phase.ts";
 import { SubagentTracker } from "../src/tracker.ts";
 
 /** gentle-pi's content-free notification bus; subagent status changes carry taskId and status. */
@@ -59,6 +63,8 @@ export function createExtension(deps: ExtensionDeps = {}) {
 		if (!herdr || env.GENTLE_PI_AGENTS_CHILD === "1") return;
 
 		const readPhase = deps.readPhase ?? readOddPhase;
+		// Sólo el valor exacto `emoji` cambia el aspecto; sin la variable todo queda igual.
+		const style: PhaseStyle = phaseStyle(env);
 		// Off by default: with `PI_HERDR_STATUS_DEBUG` unset the writer does nothing.
 		const debug = deps.debug ?? createDebug({ env });
 
@@ -73,12 +79,12 @@ export function createExtension(deps: ExtensionDeps = {}) {
 		/** `$phase`: only while the agent works, read on the turn and tool events, never polled. */
 		const phase = (): PhaseRead => {
 			if (!working) return { raw: null, token: null };
-			if (sessionId === undefined) return { raw: null, token: phaseToken(undefined) };
+			if (sessionId === undefined) return { raw: null, token: phaseToken(undefined, style) };
 			try {
 				const raw = readPhase(sessionId);
-				return { raw: raw ?? null, token: phaseToken(raw) };
+				return { raw: raw ?? null, token: phaseToken(raw, style) };
 			} catch {
-				return { raw: null, token: phaseToken(undefined) };
+				return { raw: null, token: phaseToken(undefined, style) };
 			}
 		};
 
