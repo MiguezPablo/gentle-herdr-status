@@ -39,10 +39,10 @@
 	},
 	"repository": {
 		"type": "git",
-		"url": "git+https://github.com/MiguezPablo/pi-herdr-status.git"
+		"url": "git+https://github.com/MiguezPablo/gentle-herdr-status.git"
 	},
-	"homepage": "https://github.com/MiguezPablo/pi-herdr-status#readme",
+	"homepage": "https://github.com/MiguezPablo/gentle-herdr-status#readme",
 	"bugs": {
-		"url": "https://github.com/MiguezPablo/pi-herdr-status/issues"
+		"url": "https://github.com/MiguezPablo/gentle-herdr-status/issues"
 	}
 }

@@ -1,4 +1,4 @@
-# pi-herdr-status
+# gentle-herdr-status
 
 Pi extension that shows, in the [Herdr](https://herdr.dev) sidebar, the running subagent,
 what the orchestrator is doing and the jobs it launched:
@@ -47,6 +47,11 @@ gentle [exploring] +120 -40
   committing, as `+<added> -<deleted>` (e.g. `+120 -40`, `+5 -0`), so it reads next to the
   name. While it is off nothing is computed, git is never run and the token stays unset.
   See [Configuration](#configuration).
+
+The package is published as `gentle-herdr-status`. The config directory
+(`~/.config/pi-herdr-status/`) and the managed block markers
+(`# BEGIN pi-herdr-status …`) keep their original names, so an existing install keeps its
+settings and its Herdr block without migrating anything.
 
 ## Configuration
 
@@ -371,7 +376,7 @@ This package only publishes presentation metadata (`pane.report_metadata`). It n
 From GitHub:
 
 ```bash
-pi install git:github.com/MiguezPablo/pi-herdr-status
+pi install git:github.com/MiguezPablo/gentle-herdr-status
 ```
 
 From npm, once published:
