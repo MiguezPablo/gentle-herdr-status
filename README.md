@@ -84,14 +84,14 @@ per section (there is no `phaseStyle`, `subagentStyle` or `jobsStyle`).
 
 `$name` and `$changes` never change with the style.
 
-| Field | Values | Default | What it does |
-| --- | --- | --- | --- |
-| `style` | `plain`, `emoji` | `plain` | The style of `$phase`, `$subagent` and `$jobs` together (see [Emoji style](#emoji-style)). |
-| `changes` | `true`, `false` | `false` | Turns the `$changes` counter on; while it is off git never runs. |
-| `name` | text | `gentle` | The `$name` token. Sanitized to one line and capped at 32 characters; empty or blank reads `gentle`. |
-| `showSubagent` | `true`, `false` | `true` | `false` keeps `$subagent` unset, so its row disappears. |
-| `showJobs` | `true`, `false` | `true` | `false` keeps `$jobs` unset, so its row disappears. |
-| `colors` | `true`, `false` | `false` | Colors in the managed Herdr row (see [Sync Herdr rows](#sync-herdr-rows)). |
+| Field | Values | Default | Panel row | What it does |
+| --- | --- | --- | --- | --- |
+| `style` | `plain`, `emoji` | `plain` | `Style` | The style of `$phase`, `$subagent` and `$jobs` together (see [Emoji style](#emoji-style)). |
+| `changes` | `true`, `false` | `false` | `Show changes` | Turns the `$changes` counter on; while it is off git never runs. |
+| `name` | text | `gentle` | `Panel name` | The `$name` token. Sanitized to one line and capped at 32 characters; empty or blank reads `gentle`. |
+| `showSubagent` | `true`, `false` | `true` | `Show subagents` | `false` keeps `$subagent` unset, so its row disappears. |
+| `showJobs` | `true`, `false` | `true` | `Show jobs` | `false` keeps `$jobs` unset, so its row disappears. |
+| `colors` | `true`, `false` | `false` | `Sidebar colors` | Colors in the managed Herdr row (see [Sync Herdr rows](#sync-herdr-rows)). |
 
 A file written by an older version (with `phaseStyle` and `subagentStyle`) keeps working:
 if there is no valid `style`, `emoji` in either of those fields reads as `style: "emoji"`
@@ -111,17 +111,25 @@ they never touch yours.
 
 The command opens a panel with one row per option, its current value and, for the options
 a variable forces, the mark `(forzado por PI_HERDR_STATUS_STYLE)` or
-`(forzado por PI_HERDR_STATUS_CHANGES)`: those rows cannot be changed from the panel.
+`(forzado por PI_HERDR_STATUS_CHANGES)`: those rows cannot be changed from the panel. The
+rows are `Style`, `Show changes`, `Show subagents`, `Show jobs`, `Sidebar colors` and
+`Panel name`, and then the actions `Save changes` and `Sync Herdr rows`.
 
 Every row is explained: the description of the selected row is shown under the list, in
 dim text and indented, like `/tokometer`, and it changes as you move. A description says
 what the row does and, when the value changes the result, what that value renders, for
 example `Style` names `[exploring]`, `↳ explore` and `⏵ build` for `plain` and
-`🔍 exploring`, `🧭 explore` and `🔄 build` for `emoji`; `Changes token` says it shows
-`+N -M`, the uncommitted lines of the session's repo, remeasured on every Pi event;
-`Sync Herdr rows` says it writes the Herdr row with a backup and reloads Herdr. A row
-forced by a variable says so in its description too (`Fixed by …`), and it is described
-with the value in effect, not the one stored in the file.
+`🔍 exploring`, `🧭 explore` and `🔄 build` for `emoji`; `Show changes` says it shows
+`+N -M`, the uncommitted lines of the session's repo, next to the name and remeasured on
+every Pi event; `Sync Herdr rows` says it writes the Herdr row with a backup and reloads
+Herdr. A row forced by a variable says so in its description too (`Fixed by …`), and it is
+described with the value in effect, not the one stored in the file.
+
+In the panel a row talks about what you see in the sidebar, not about the metadata token
+behind it, so `token` only appears at the end of the description as `Herdr token: $changes.`
+(`$subagent`, `$jobs`, `$name`), a note for whoever writes the Herdr row by hand. The
+option ids and the JSON fields (`changes`, `showSubagent`, `showJobs`) keep their names, so
+an existing `config.json` needs no change.
 
 The descriptions live in the config module (`src/config.ts`) next to the labels; the
 panel only renders them.

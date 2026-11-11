@@ -932,10 +932,11 @@ test("S18: the panel shows the description of the selected row and follows the c
 	const style = panel().render(80).join("\n");
 	assert.match(style, /whole sidebar/u, "the selected Style row explains itself");
 	assert.match(style, /\[exploring\]/u, "and shows what the plain style renders");
-	assert.ok(!/\$changes is never published/u.test(style), "only the selected row is described, not every row");
+	assert.ok(!/No counter next to the name/u.test(style), "only the selected row is described, not every row");
 	moveTo(panel(), "changes");
 	const changes = panel().render(80).join("\n");
-	assert.match(changes, /\$changes is never published/u, "moving down describes the Changes row as it is, off");
+	assert.match(changes, /Show changes: off/u, "the row reads Show changes, not the token jargon");
+	assert.match(changes, /No counter next to the name/u, "moving down describes the changes row as it is, off");
 	assert.ok(!/whole sidebar/u.test(changes), "and the Style description is gone");
 	panel().handleInput(KEYS.confirm);
 	assert.match(panel().render(80).join("\n"), /\+N -M/u, "cycled on, the description follows the draft value");

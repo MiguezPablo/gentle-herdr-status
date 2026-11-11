@@ -82,12 +82,16 @@ export interface EffectiveConfig {
 	forced: ForcedOptions;
 }
 
-/** Etiqueta de cada opción en el panel. */
+/**
+ * Etiqueta de cada opción en el panel. Las filas que muestran algo en la barra empiezan con
+ * "Show": "token" es jerga interna de quien arma las filas de Herdr, no lo que ve el usuario
+ * (S19). Los ids y los campos del JSON no cambian.
+ */
 const OPTION_LABELS: Record<OptionId, string> = {
 	style: "Style",
-	changes: "Changes token",
-	showSubagent: "Subagent token",
-	showJobs: "Jobs token",
+	changes: "Show changes",
+	showSubagent: "Show subagents",
+	showJobs: "Show jobs",
 	colors: "Sidebar colors",
 	name: "Panel name",
 };
@@ -95,24 +99,27 @@ const OPTION_LABELS: Record<OptionId, string> = {
 /**
  * Una línea que explica qué hace la opción y, cuando el valor la cambia, qué muestra ese
  * valor. Vive acá, no en el render, para que el panel sea sólo una capa fina (S18).
+ *
+ * Las filas de los tokens describen lo que se ve en la barra y nombran el `$token` sólo al
+ * final, como dato para quien arma la fila de Herdr a mano (S19).
  */
 const OPTION_DESCRIPTIONS: Record<OptionId, (config: HerdrStatusConfig) => string> = {
 	style: (config) => config.style === "emoji"
 		? "Emoji for the whole sidebar: 🔍 exploring, 🧭 explore and 🔄 build."
 		: "Plain for the whole sidebar: [exploring], ↳ explore and ⏵ build.",
 	changes: (config) => config.changes
-		? "Shows +N -M, the uncommitted lines of the session's repo, remeasured on every Pi event."
-		: "No changes counter: $changes is never published and git never runs.",
+		? "Shows +N -M, the uncommitted lines of the session's repo, next to the name and remeasured on every Pi event. Herdr token: $changes."
+		: "No counter next to the name, and git never runs. Herdr token: $changes.",
 	showSubagent: (config) => config.showSubagent
-		? "Shows $subagent as ↳ explore (+1), or 🧭 explore with the emoji style."
-		: "Hides $subagent: the sidebar has no subagent row.",
+		? "Shows the running subagent in its own row as ↳ explore (+1), or 🧭 explore with the emoji style. Herdr token: $subagent."
+		: "No subagent row: the sidebar shows only the name, the phase and the jobs. Herdr token: $subagent.",
 	showJobs: (config) => config.showJobs
-		? "Shows $jobs as ⏵ build (+1), or 🔄 build with the emoji style."
-		: "Hides $jobs: the sidebar has no jobs row.",
+		? "Shows the running jobs in their own row as ⏵ build (+1), or 🔄 build with the emoji style. Herdr token: $jobs."
+		: "No jobs row: a running job never reaches the sidebar. Herdr token: $jobs.",
 	colors: (config) => config.colors
 		? "Herdr rows get colored cells: a Catppuccin hex per token and one rule per phase."
 		: "Herdr rows get plain tokens and Herdr paints them with its own theme.",
-	name: () => "The $name token, the panel name shown as gentle; Enter edits it, up to 32 characters.",
+	name: (config) => `Shows ${normalizeConfig(config).name} in the name row; Enter edits it, up to 32 characters. Herdr token: $name.`,
 };
 
 /**

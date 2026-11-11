@@ -186,6 +186,19 @@ test("S17: one Style row replaces the phase and subagent styles, and no jobsStyl
 	assert.ok(rows.every((row) => row.label.length > 0), "every row has a label");
 });
 
+test("S19: the toggle rows read Show …, not the internal token jargon", () => {
+	assert.deepEqual(
+		optionRows(DEFAULT_CONFIG).map((row) => row.label),
+		["Style", "Show changes", "Show subagents", "Show jobs", "Sidebar colors", "Panel name"],
+		"the labels start with Show where the row shows something in the sidebar",
+	);
+	assert.deepEqual(
+		optionRows(DEFAULT_CONFIG).map((row) => row.id),
+		["style", "changes", "showSubagent", "showJobs", "colors", "name"],
+		"the ids and the JSON fields never change with the label",
+	);
+});
+
 test("S18: every panel row carries a one-line description, options first and then the actions", () => {
 	const rows = [...optionRows(DEFAULT_CONFIG), ...actionRows()];
 	assert.deepEqual(
@@ -228,6 +241,32 @@ test("S18: the description explains the row and what the current value shows", (
 
 	const name = descriptionOf(DEFAULT_CONFIG, "name");
 	assert.ok(name.includes("$name"), `the name row names its token: ${name}`);
+});
+
+test("S19: the toggle rows describe what the sidebar shows and name the Herdr token last", () => {
+	const tokens = { changes: "$changes", showSubagent: "$subagent", showJobs: "$jobs" } as const;
+	const on: HerdrStatusConfig = { ...DEFAULT_CONFIG, changes: true };
+	const off: HerdrStatusConfig = { ...DEFAULT_CONFIG, changes: false, showSubagent: false, showJobs: false };
+	for (const id of ["changes", "showSubagent", "showJobs"] as const) {
+		for (const text of [descriptionOf(on, id), descriptionOf(off, id)]) {
+			const note = `Herdr token: ${tokens[id]}.`;
+			assert.ok(text.endsWith(note), `${id} ends with its token, as data for a hand-written row: ${text}`);
+			const body = text.slice(0, -note.length);
+			assert.ok(!/token/iu.test(body), `${id} keeps \"token\" for the final note only: ${body}`);
+		}
+	}
+
+	// Lo que se ve en la barra, no el nombre interno del campo.
+	assert.match(descriptionOf(on, "changes"), /\+N -M/u, "the counter says what it shows");
+	assert.match(descriptionOf(on, "changes"), /next to the name/u, "and where it shows it");
+	assert.match(descriptionOf(on, "showSubagent"), /↳ explore \(\+1\)/u, "the subagent row shows its label");
+	assert.match(descriptionOf(on, "showSubagent"), /row/u, "in its own row");
+	assert.match(descriptionOf(on, "showJobs"), /⏵ build \(\+1\)/u, "the jobs row shows its label too");
+
+	// El nombre habla del nombre en efecto, no de un \"gentle\" fijo.
+	const name = descriptionOf({ ...DEFAULT_CONFIG, name: "side" }, "name");
+	assert.match(name, /side/u, `the name row describes the name in effect: ${name}`);
+	assert.ok(name.endsWith("Herdr token: $name."), `and names its token last: ${name}`);
 });
 
 test("S18: the action rows say what they write", () => {
