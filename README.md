@@ -374,6 +374,12 @@ From GitHub:
 pi install git:github.com/MiguezPablo/pi-herdr-status
 ```
 
+From npm, once published:
+
+```bash
+pi install npm:gentle-herdr-status
+```
+
 Or from a local checkout:
 
 ```bash
