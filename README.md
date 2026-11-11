@@ -371,7 +371,7 @@ This package only publishes presentation metadata (`pane.report_metadata`). It n
 From GitHub:
 
 ```bash
-pi install github:MiguezPablo/pi-herdr-status
+pi install git:github.com/MiguezPablo/pi-herdr-status
 ```
 
 Or from a local checkout:
