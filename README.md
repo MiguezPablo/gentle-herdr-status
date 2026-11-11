@@ -14,8 +14,10 @@ pi [exploring]
   `[implementing]`, `[checking]`, …), or `[working]` while no phase is reported. It
   disappears when the agent goes idle, so the row reads just `pi`.
 - `$subagent` holds the `↳ ` prefix that marks the row as a subagent, the oldest
-  running subagent's name, plus the total count in parentheses when two or more run. It
-  disappears when no subagent runs; the arrow never shows on its own.
+  running subagent's name without gentle-pi's `gentle-ai-` prefix (`gentle-ai-explore`
+  shows as `explore`), plus the total count in parentheses when two or more run, e.g.
+  `↳ explore`, `↳ verify (2)`. It disappears when no subagent runs; the arrow never shows
+  on its own.
 
 ## What it does not do
 
@@ -63,6 +65,9 @@ Apply it with `herdr server reload-config`. A row whose only token is unset is h
 ## How it works
 
 - Blocking subagents (`mode: "task"`, the default) count from the tool call to its result.
+- The name shown drops gentle-pi's `gentle-ai-` prefix (`gentle-ai-worker` -> `worker`); a
+  name without that prefix is shown as it comes, and a name that was only the prefix
+  falls back to `subagent`.
 - Background subagents count from their launch result (`details.gentleAgents`) until
   gentle-pi's `gentle-pi:notification:source` bus reports a finished status
   (`completed`, `failed`, `cancelled`, `timed_out`).

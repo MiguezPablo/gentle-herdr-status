@@ -86,6 +86,43 @@ test("a blocking subagent_continue of an unknown task falls back to a neutral wo
 	assert.equal(tracker.label(), "↳ subagent");
 });
 
+test("the label drops gentle-pi's gentle-ai- prefix from the agent name", () => {
+	const tracker = new SubagentTracker();
+	tracker.toolCall("c1", "subagent_run", { agent: "gentle-ai-explore", task: "x" });
+	assert.equal(tracker.label(), "↳ explore", "blocking subagent_run");
+	tracker.toolResult("c1", "subagent_run", details("t1", "gentle-ai-explore", "completed"));
+	assert.equal(tracker.label(), null);
+
+	tracker.toolResult("c2", "subagent_run", details("t2", "gentle-ai-worker", "running"));
+	assert.equal(tracker.label(), "↳ worker", "background subagent");
+
+	tracker.toolCall("c3", "subagent_continue", { task_id: "t2", prompt: "more" });
+	assert.equal(tracker.label(), "↳ worker (2)", "subagent_continue of a known task keeps the count");
+	tracker.toolResult("c3", "subagent_continue", details("t3", "gentle-ai-worker", "completed"));
+	tracker.status("t2", "completed");
+	assert.equal(tracker.label(), null);
+});
+
+test("an agent name without the gentle-ai- prefix is unchanged", () => {
+	const tracker = new SubagentTracker();
+	tracker.toolCall("c1", "subagent_run", { agent: "reviewer", task: "x" });
+	assert.equal(tracker.label(), "↳ reviewer");
+	tracker.toolResult("c1", "subagent_run", details("t1", "reviewer", "completed"));
+	assert.equal(tracker.label(), null);
+});
+
+test("an agent named only gentle-ai- falls back to the neutral word", () => {
+	const tracker = new SubagentTracker();
+	tracker.toolCall("c1", "subagent_run", { agent: "gentle-ai-", task: "x" });
+	assert.equal(tracker.label(), "↳ subagent");
+});
+
+test("the cap applies to the name after dropping the prefix", () => {
+	const tracker = new SubagentTracker();
+	tracker.toolCall("c1", "subagent_run", { agent: `gentle-ai-${"x".repeat(40)}`, task: "x" });
+	assert.equal(tracker.label(), `↳ ${"x".repeat(32)}`);
+});
+
 test("a failed tool call without details clears its pending entry", () => {
 	const tracker = new SubagentTracker();
 	tracker.toolCall("c1", "subagent_run", { agent: "explore", task: "x" });

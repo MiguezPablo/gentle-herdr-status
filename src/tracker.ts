@@ -1,8 +1,9 @@
 /**
  * Tracks the subagents this Pi session launched, in launch order, and renders
  * the sidebar label: a `↳ ` prefix that marks the row as a child, then the oldest
- * running agent name, plus the total count in parentheses when two or more run,
- * e.g. `↳ explore` or `↳ worker (3)`. Nothing running renders no label at all.
+ * running agent name without gentle-pi's `gentle-ai-` prefix, plus the total count in
+ * parentheses when two or more run, e.g. `↳ explore` or `↳ worker (3)`. Nothing running
+ * renders no label at all.
  *
  * Sources (gentle-pi):
  * - tool_call of `subagent_run` / `subagent_continue` in task mode (the default):
@@ -20,6 +21,8 @@ export const LABEL_PREFIX = "↳ ";
 const RUN_TOOL = "subagent_run";
 const CONTINUE_TOOL = "subagent_continue";
 const FALLBACK_NAME = "subagent";
+/** Prefijo con el que gentle-pi nombra a sus agentes; sobra en el sidebar. */
+const AGENT_PREFIX = "gentle-ai-";
 const MAX_NAME = 32;
 
 type Entry = { agent: string };
@@ -42,6 +45,18 @@ export function sanitizeName(value: string): string {
 	return Array.from(clean).slice(0, MAX_NAME).join("").trim();
 }
 
+/**
+ * Nombre visible de un agente: sin el prefijo `gentle-ai-` (el tope de caracteres se
+ * aplica después de acortarlo) y con el fallback neutro cuando sólo quedaba el prefijo.
+ * Devuelve undefined cuando el nombre crudo viene vacío, para que el llamador lo ignore.
+ */
+function agentName(value: string): string | undefined {
+	const trimmed = value.trim();
+	if (trimmed.length === 0) return undefined;
+	const shortened = trimmed.startsWith(AGENT_PREFIX) ? trimmed.slice(AGENT_PREFIX.length) : trimmed;
+	return sanitizeName(shortened) || FALLBACK_NAME;
+}
+
 export class SubagentTracker {
 	/** Insertion order is launch order; keys are `call:<toolCallId>` or `task:<taskId>`. */
 	private readonly running = new Map<string, Entry>();
@@ -52,9 +67,9 @@ export class SubagentTracker {
 		if (toolName !== RUN_TOOL && toolName !== CONTINUE_TOOL) return;
 		if (!record(input) || input.mode === "background") return;
 		const agent = toolName === RUN_TOOL
-			? text(input.agent)
+			? agentName(text(input.agent) ?? "")
 			: this.names.get(text(input.task_id) ?? "");
-		this.running.set(`call:${toolCallId}`, { agent: sanitizeName(agent ?? "") || FALLBACK_NAME });
+		this.running.set(`call:${toolCallId}`, { agent: agent || FALLBACK_NAME });
 	}
 
 	toolResult(toolCallId: string, toolName: string, details: unknown): void {
@@ -62,7 +77,7 @@ export class SubagentTracker {
 		this.running.delete(`call:${toolCallId}`);
 		const task = record(details) && record(details.gentleAgents) ? details.gentleAgents : undefined;
 		const taskId = text(task?.taskId);
-		const agent = sanitizeName(text(task?.agent) ?? "");
+		const agent = agentName(text(task?.agent) ?? "");
 		const status = text(task?.status);
 		if (!taskId || !agent || !status) return;
 		this.names.set(taskId, agent);
