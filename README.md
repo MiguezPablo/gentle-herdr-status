@@ -126,7 +126,7 @@ Herdr. A row forced by a variable says so in its description too (`Fixed by …`
 described with the value in effect, not the one stored in the file.
 
 In the panel a row talks about what you see in the sidebar, not about the metadata token
-behind it, so `token` only appears at the end of the description as `Herdr token: $changes.`
+behind it, so `token` only appears at the end of the description as `Herdr token: changes.`
 (`$subagent`, `$jobs`, `$name`), a note for whoever writes the Herdr row by hand. The
 option ids and the JSON fields (`changes`, `showSubagent`, `showJobs`) keep their names, so
 an existing `config.json` needs no change.

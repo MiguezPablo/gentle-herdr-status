@@ -236,15 +236,15 @@ test("S18: the description explains the row and what the current value shows", (
 		assert.notEqual(descriptionOf(on, id), descriptionOf(off, id), `${id} describes its on and off value`);
 	}
 	assert.ok(descriptionOf(on, "changes").includes("+N -M"), "the counter says what it shows");
-	assert.ok(descriptionOf(on, "showSubagent").includes("$subagent"), "the subagent row names its token");
-	assert.ok(descriptionOf(on, "showJobs").includes("$jobs"), "the jobs row names its token");
+	assert.ok(descriptionOf(on, "showSubagent").includes("token: subagent"), "the subagent row names its token");
+	assert.ok(descriptionOf(on, "showJobs").includes("token: jobs"), "the jobs row names its token");
 
 	const name = descriptionOf(DEFAULT_CONFIG, "name");
-	assert.ok(name.includes("$name"), `the name row names its token: ${name}`);
+	assert.ok(name.includes("token: name"), `the name row names its token: ${name}`);
 });
 
 test("S19: the toggle rows describe what the sidebar shows and name the Herdr token last", () => {
-	const tokens = { changes: "$changes", showSubagent: "$subagent", showJobs: "$jobs" } as const;
+	const tokens = { changes: "changes", showSubagent: "subagent", showJobs: "jobs" } as const;
 	const on: HerdrStatusConfig = { ...DEFAULT_CONFIG, changes: true };
 	const off: HerdrStatusConfig = { ...DEFAULT_CONFIG, changes: false, showSubagent: false, showJobs: false };
 	for (const id of ["changes", "showSubagent", "showJobs"] as const) {
@@ -266,7 +266,7 @@ test("S19: the toggle rows describe what the sidebar shows and name the Herdr to
 	// El nombre habla del nombre en efecto, no de un \"gentle\" fijo.
 	const name = descriptionOf({ ...DEFAULT_CONFIG, name: "side" }, "name");
 	assert.match(name, /side/u, `the name row describes the name in effect: ${name}`);
-	assert.ok(name.endsWith("Herdr token: $name."), `and names its token last: ${name}`);
+	assert.ok(name.endsWith("Herdr token: name."), `and names its token last: ${name}`);
 });
 
 test("S18: the action rows say what they write", () => {
