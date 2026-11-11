@@ -6,7 +6,7 @@
  * `↳ worker (+2)`. Nothing running renders no label at all.
  *
  * The prefix is the only thing the style changes: with the emoji style it is one emoji per
- * agent instead of `↳ ` (`🧭 explore (+1)`, `🔨 worker`, `🧪 verify`, `🤖` for any other),
+ * agent instead of `↳ ` (`🧭 explore (+1)`, `🔨 worker`, `🔎 verify`, `🤖` for any other),
  * because an arrow says "child" but not which child. El estilo es uno solo para todo el
  * sidebar (`Style`): `plain` es el default. Name, cap and counter are shared.
  *
@@ -32,7 +32,7 @@ export const LABEL_PREFIX = "↳ ";
 export const SUBAGENT_EMOJIS: Readonly<Record<string, string>> = {
 	explore: "🧭",
 	worker: "🔨",
-	verify: "🧪",
+	verify: "🔎",
 };
 
 /** Emoji de cualquier otro agente: no se inventa un rol que no se conoce. */

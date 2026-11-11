@@ -289,7 +289,7 @@ from the name after dropping gentle-pi's `gentle-ai-` prefix, and the `⏵ ` pre
 | --- | --- | --- |
 | `explore` | 🧭 | `🧭 explore` |
 | `worker` | 🔨 | `🔨 worker` |
-| `verify` | 🧪 | `🧪 verify` |
+| `verify` | 🔎 | `🔎 verify` |
 | any other | 🤖 | `🤖 reviewer` |
 | a job | 🔄 | `🔄 build` |
 

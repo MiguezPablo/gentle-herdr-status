@@ -199,7 +199,7 @@ function assertSingleCodepoint(emoji: string, label: string): void {
 }
 
 test("S14: the subagent emoji map is one codepoint per agent, without U+FE0F", () => {
-	assert.deepEqual({ ...SUBAGENT_EMOJIS }, { explore: "🧭", worker: "🔨", verify: "🧪" });
+	assert.deepEqual({ ...SUBAGENT_EMOJIS }, { explore: "🧭", worker: "🔨", verify: "🔎" });
 	for (const [agent, emoji] of Object.entries(SUBAGENT_EMOJIS)) assertSingleCodepoint(emoji, agent);
 	assertSingleCodepoint(OTHER_SUBAGENT_EMOJI, "fallback");
 	assert.equal(OTHER_SUBAGENT_EMOJI, "🤖");
@@ -215,7 +215,7 @@ test("S14: the emoji style replaces the arrow with the agent's emoji, counter an
 	assert.equal(tracker.label("emoji"), "🔨 worker");
 	tracker.reset();
 	tracker.toolCall("c3", "subagent_run", { agent: "gentle-ai-verify", task: "x" });
-	assert.equal(tracker.label("emoji"), "🧪 verify", "the map uses the name after dropping the prefix");
+	assert.equal(tracker.label("emoji"), "🔎 verify", "the map uses the name after dropping the prefix");
 	tracker.reset();
 	tracker.toolCall("c4", "subagent_run", { agent: "reviewer", task: "x" });
 	assert.equal(tracker.label("emoji"), "🤖 reviewer", "any other agent gets the neutral robot");
