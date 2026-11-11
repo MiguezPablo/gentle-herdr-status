@@ -113,6 +113,19 @@ The command opens a panel with one row per option, its current value and, for th
 a variable forces, the mark `(forzado por PI_HERDR_STATUS_STYLE)` or
 `(forzado por PI_HERDR_STATUS_CHANGES)`: those rows cannot be changed from the panel.
 
+Every row is explained: the description of the selected row is shown under the list, in
+dim text and indented, like `/tokometer`, and it changes as you move. A description says
+what the row does and, when the value changes the result, what that value renders, for
+example `Style` names `[exploring]`, `↳ explore` and `⏵ build` for `plain` and
+`🔍 exploring`, `🧭 explore` and `🔄 build` for `emoji`; `Changes token` says it shows
+`+N -M`, the uncommitted lines of the session's repo, remeasured on every Pi event;
+`Sync Herdr rows` says it writes the Herdr row with a backup and reloads Herdr. A row
+forced by a variable says so in its description too (`Fixed by …`), and it is described
+with the value in effect, not the one stored in the file.
+
+The descriptions live in the config module (`src/config.ts`) next to the labels; the
+panel only renders them.
+
 | Key | Action |
 | --- | --- |
 | `↑` `↓` | Move between rows. |

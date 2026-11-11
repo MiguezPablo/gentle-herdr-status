@@ -926,6 +926,43 @@ test("S17: the panel has one Style row and no per-section style rows", async () 
 	await done;
 });
 
+test("S18: the panel shows the description of the selected row and follows the cursor", async () => {
+	const { commands } = load();
+	const { panel, done } = openPanel(commands);
+	const style = panel().render(80).join("\n");
+	assert.match(style, /whole sidebar/u, "the selected Style row explains itself");
+	assert.match(style, /\[exploring\]/u, "and shows what the plain style renders");
+	assert.ok(!/\$changes is never published/u.test(style), "only the selected row is described, not every row");
+	moveTo(panel(), "changes");
+	const changes = panel().render(80).join("\n");
+	assert.match(changes, /\$changes is never published/u, "moving down describes the Changes row as it is, off");
+	assert.ok(!/whole sidebar/u.test(changes), "and the Style description is gone");
+	panel().handleInput(KEYS.confirm);
+	assert.match(panel().render(80).join("\n"), /\+N -M/u, "cycled on, the description follows the draft value");
+	panel().handleInput(KEYS.cancel);
+	await done;
+});
+
+test("S18: the action rows are described and a forced row names its variable in the description", async () => {
+	const { commands } = load({ ...HERDR_ENV, PI_HERDR_STATUS_STYLE: "emoji" });
+	const { panel, done } = openPanel(commands);
+	const style = panel().render(80).join("\n");
+	assert.match(style, /🔍 exploring/u, "the emoji style in effect is the one described");
+	assert.match(style, /PI_HERDR_STATUS_STYLE/u, "the description says the variable forces the row");
+	assert.ok(
+		panel().render(40).join(" ").includes("Fixed by PI_HERDR_STATUS_STYLE"),
+		"a narrow panel wraps the description instead of cutting the variable",
+	);
+	moveToSave(panel());
+	assert.match(panel().render(80).join("\n"), /every token/u, "Save changes explains what it does");
+	moveToSync(panel());
+	const sync = panel().render(80).join("\n");
+	assert.match(sync, /backup/u, "Sync Herdr rows explains the backup");
+	assert.ok(!/every token/u.test(sync), "one description at a time");
+	panel().handleInput(KEYS.cancel);
+	await done;
+});
+
 test("S17: saving a legacy file from the panel writes only the new style field", async () => {
 	const configPath = freshConfigPath();
 	mkdirSync(dirname(configPath), { recursive: true });

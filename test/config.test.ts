@@ -6,9 +6,11 @@ import { test } from "node:test";
 
 import { CHANGES_ENV } from "../src/changes.ts";
 import {
+	ACTION_IDS,
 	CONFIG_ENV,
 	DEFAULT_CONFIG,
 	OPTION_IDS,
+	actionRows,
 	applyName,
 	configFilePath,
 	cycleOption,
@@ -19,6 +21,7 @@ import {
 	optionRows,
 	saveConfig,
 	type HerdrStatusConfig,
+	type OptionId,
 } from "../src/config.ts";
 import { STYLE_ENV } from "../src/phase.ts";
 import { PANEL_NAME } from "../src/herdr.ts";
@@ -181,6 +184,75 @@ test("S17: one Style row replaces the phase and subagent styles, and no jobsStyl
 	assert.equal(rows[1].forcedBy, CHANGES_ENV);
 	assert.equal(rows[2].forcedBy, undefined, "an unforced option can be edited");
 	assert.ok(rows.every((row) => row.label.length > 0), "every row has a label");
+});
+
+test("S18: every panel row carries a one-line description, options first and then the actions", () => {
+	const rows = [...optionRows(DEFAULT_CONFIG), ...actionRows()];
+	assert.deepEqual(
+		rows.map((row) => row.id),
+		[...OPTION_IDS, ...ACTION_IDS],
+		"one description per row, in the order the panel shows them",
+	);
+	for (const row of rows) {
+		assert.ok(row.description.length > 0, `${row.id} has a description`);
+		assert.ok(!row.description.includes("\n"), `${row.id} is one line`);
+	}
+});
+
+/** La descripción de una opción en una config dada, para no depender del índice de la fila. */
+function descriptionOf(config: HerdrStatusConfig, id: OptionId): string {
+	const row = optionRows(config).find((candidate) => candidate.id === id);
+	assert.ok(row, `${id} is a panel row`);
+	return row.description;
+}
+
+test("S18: the description explains the row and what the current value shows", () => {
+	const plain = descriptionOf(DEFAULT_CONFIG, "style");
+	for (const part of ["[exploring]", "↳ explore", "⏵ build", "whole sidebar"]) {
+		assert.ok(plain.includes(part), `${part} in the plain style description: ${plain}`);
+	}
+	const emoji = descriptionOf({ ...DEFAULT_CONFIG, style: "emoji" }, "style");
+	for (const part of ["🔍 exploring", "🧭 explore", "🔄 build"]) {
+		assert.ok(emoji.includes(part), `${part} in the emoji style description: ${emoji}`);
+	}
+
+	// Cada toggle describe lo que hace encendido y lo que deja de pasar apagado.
+	const on: HerdrStatusConfig = { ...DEFAULT_CONFIG, changes: true, showSubagent: true, showJobs: true, colors: true };
+	const off: HerdrStatusConfig = { ...DEFAULT_CONFIG, changes: false, showSubagent: false, showJobs: false, colors: false };
+	for (const id of ["changes", "showSubagent", "showJobs", "colors"] as const) {
+		assert.notEqual(descriptionOf(on, id), descriptionOf(off, id), `${id} describes its on and off value`);
+	}
+	assert.ok(descriptionOf(on, "changes").includes("+N -M"), "the counter says what it shows");
+	assert.ok(descriptionOf(on, "showSubagent").includes("$subagent"), "the subagent row names its token");
+	assert.ok(descriptionOf(on, "showJobs").includes("$jobs"), "the jobs row names its token");
+
+	const name = descriptionOf(DEFAULT_CONFIG, "name");
+	assert.ok(name.includes("$name"), `the name row names its token: ${name}`);
+});
+
+test("S18: the action rows say what they write", () => {
+	const rows = actionRows();
+	const save = rows.find((row) => row.id === "save");
+	const sync = rows.find((row) => row.id === "sync");
+	assert.ok(save, "the save row is described too");
+	assert.ok(sync, "and the sync row");
+	assert.match(save.description, /every token/u, "saving republishes the tokens");
+	assert.match(sync.description, /Herdr/u, "sync writes the Herdr row");
+	assert.match(sync.description, /backup/u, "and backs the Herdr config up first");
+});
+
+test("S18: a forced option says in its description which variable fixes it", () => {
+	const stored: HerdrStatusConfig = { ...DEFAULT_CONFIG, style: "plain" };
+	const { forced, config: effective } = effectiveConfig(stored, { [STYLE_ENV]: "emoji" });
+	const forcedRow = optionRows(stored, forced, effective).find((row) => row.id === "style");
+	assert.ok(forcedRow, "the style row is there");
+	assert.ok(forcedRow.description.includes(STYLE_ENV), `the description names the variable: ${forcedRow.description}`);
+	assert.match(forcedRow.description, /🔍 exploring/u, "it describes the value in effect, not the stored one");
+	assert.equal(forcedRow.value, "plain", "the row still shows the stored value for the file");
+	assert.ok(
+		!descriptionOf(DEFAULT_CONFIG, "style").includes(STYLE_ENV),
+		"without the variable the description does not mention it",
+	);
 });
 
 test("S13/S17: cycling turns one option to its other value and leaves the rest alone", () => {

@@ -16,7 +16,9 @@
  * waiting for the next Pi event. Escape cancels and writes nothing. The "Sync Herdr rows"
  * action saves the same draft and then writes the `pi` row inside a
  * `# BEGIN pi-herdr-status …` block of Herdr's config (`src/herdr-config.ts`), checking and
- * reloading Herdr; a row written by someone else is never touched.
+ * reloading Herdr; a row written by someone else is never touched. The panel describes the
+ * selected row under the list (one line per row, from `src/config.ts`), so each option
+ * says what it does and what its value renders.
  *
  * The environment still wins over the file for the two variables that existed before it
  * (`PI_HERDR_STATUS_STYLE`, `PI_HERDR_STATUS_CHANGES`); the panel shows those options as
@@ -36,6 +38,8 @@ import type {
 
 import { ChangesCounter, type GitRun } from "../src/changes.ts";
 import {
+	ACTION_IDS,
+	actionRows,
 	applyName,
 	configFilePath,
 	cycleOption,
@@ -46,8 +50,10 @@ import {
 	OPTION_IDS,
 	optionRows,
 	saveConfig,
+	type ActionRow,
 	type ForcedOptions,
 	type HerdrStatusConfig,
+	type OptionRow,
 } from "../src/config.ts";
 import { createDebug, type DebugWriter } from "../src/debug.ts";
 import { syncHerdrRows, type HerdrFs, type HerdrRun } from "../src/herdr-config.ts";
@@ -95,10 +101,6 @@ type Ctx = {
 } | undefined;
 type ToolEvent = { toolCallId?: unknown; toolName?: unknown; input?: unknown; details?: unknown };
 
-/** Fila de acción del panel: no es una opción, escribe el archivo y cierra. */
-const SAVE_LABEL = "Save changes";
-/** Fila de acción que guarda la config y escribe la fila `pi` en el config de Herdr. */
-const SYNC_LABEL = "Sync Herdr rows";
 /** ctrl+s guarda desde cualquier fila, sin tener que llegar hasta `Save changes`. */
 const SAVE_KEY = "\u0013";
 const BACKSPACE_KEYS: ReadonlySet<string> = new Set(["\u007f", "\b"]);
@@ -111,6 +113,8 @@ type PanelKeys = Pick<KeybindingsManager, "matches">;
 type PanelOptions = {
 	/** Copia editable de lo guardado: hasta guardar no se escribe nada. */
 	config: HerdrStatusConfig;
+	/** Config en efecto: con una opción forzada, la descripción usa el valor del env. */
+	effective: HerdrStatusConfig;
 	/** Opciones que una variable de entorno fija: se marcan y no se editan. */
 	forced: ForcedOptions;
 	theme: PanelTheme;
@@ -132,6 +136,24 @@ function clip(text: string, width: number): string {
 	if (width <= 0) return "";
 	const chars = Array.from(text);
 	return chars.length <= width ? text : `${chars.slice(0, width - 1).join("")}…`;
+}
+
+/** Corta un texto en líneas de ancho visible, sin partir palabras salvo que no entren. */
+function wrapLine(text: string, width: number): string[] {
+	if (width <= 0) return [];
+	const lines: string[] = [];
+	let line = "";
+	for (const word of text.split(" ").filter((part) => part.length > 0)) {
+		const candidate = line === "" ? word : `${line} ${word}`;
+		if (Array.from(candidate).length <= width) {
+			line = candidate;
+			continue;
+		}
+		if (line !== "") lines.push(line);
+		line = word;
+	}
+	if (line !== "") lines.push(line);
+	return lines.map((each) => clip(each, width));
 }
 
 /** Un carácter escribible: el panel no interpreta teclas de control como texto. */
@@ -158,9 +180,14 @@ class SettingsPanel {
 		this.config = options.config;
 	}
 
+	/**
+	 * Una fila por opción más las dos acciones. La descripción de la fila seleccionada va
+	 * debajo de la lista, en gris, como en el panel de /tokometer.
+	 */
 	render(width: number): string[] {
 		const theme = this.deps.theme;
-		const rows = optionRows(this.config, this.deps.forced);
+		const rows = optionRows(this.config, this.deps.forced, this.deps.effective);
+		const actions = actionRows();
 		const lines = [theme.fg("accent", theme.bold(clip("pi-herdr-status", width)))];
 		rows.forEach((row, index) => {
 			const selected = index === this.cursor;
@@ -170,12 +197,18 @@ class SettingsPanel {
 			const line = clip(`${selected ? "› " : "  "}${row.label}: ${value}${forced}`, width);
 			lines.push(selected ? theme.fg("accent", line) : line);
 		});
-		const saveSelected = this.cursor === rows.length;
-		const save = clip(`${saveSelected ? "› " : "  "}${SAVE_LABEL}`, width);
-		lines.push(saveSelected ? theme.fg("accent", save) : save);
-		const syncSelected = this.cursor === rows.length + 1;
-		const sync = clip(`${syncSelected ? "› " : "  "}${SYNC_LABEL}`, width);
-		lines.push(syncSelected ? theme.fg("accent", sync) : sync);
+		actions.forEach((action, index) => {
+			const selected = this.cursor === rows.length + index;
+			const line = clip(`${selected ? "› " : "  "}${action.label}`, width);
+			lines.push(selected ? theme.fg("accent", line) : line);
+		});
+		const description = this.selectedDescription(rows, actions);
+		if (description !== undefined) {
+			lines.push("");
+			for (const part of wrapLine(description, width - 2)) {
+				lines.push(theme.fg("dim", clip(`  ${part}`, width)));
+			}
+		}
 		lines.push(theme.fg("dim", clip("↑↓ move · Enter change · ctrl+s save · Esc cancel", width)));
 		if (this.editing !== undefined) {
 			lines.push(theme.fg("dim", clip("Panel name: Enter keep · Esc discard", width)));
@@ -212,7 +245,16 @@ class SettingsPanel {
 
 	/** Una fila por opción más las de guardar y sincronizar. */
 	private get rowCount(): number {
-		return OPTION_IDS.length + 2;
+		return OPTION_IDS.length + ACTION_IDS.length;
+	}
+
+	/** La descripción de la fila donde está el cursor, sea una opción o una acción. */
+	private selectedDescription(
+		rows: readonly OptionRow[],
+		actions: readonly ActionRow[],
+	): string | undefined {
+		if (this.cursor < rows.length) return rows[this.cursor].description;
+		return actions[this.cursor - rows.length]?.description;
 	}
 
 	private move(delta: number): void {
@@ -220,9 +262,10 @@ class SettingsPanel {
 	}
 
 	private confirm(): void {
-		const rows = optionRows(this.config, this.deps.forced);
+		const rows = optionRows(this.config, this.deps.forced, this.deps.effective);
 		if (this.cursor >= rows.length) {
-			this.deps.done({ action: this.cursor === rows.length ? "save" : "sync", config: this.config });
+			const action = actionRows()[this.cursor - rows.length];
+			this.deps.done({ action: action.id, config: this.config });
 			return;
 		}
 		const row = rows[this.cursor];
@@ -393,6 +436,7 @@ export function createExtension(deps: ExtensionDeps = {}) {
 			const result = await ctx.ui.custom<PanelResult>((tui, theme, keybindings, done) =>
 				new SettingsPanel({
 					config: stored,
+					effective: effective.config,
 					forced: effective.forced,
 					theme,
 					keybindings,

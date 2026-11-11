@@ -92,11 +92,74 @@ const OPTION_LABELS: Record<OptionId, string> = {
 	name: "Panel name",
 };
 
-/** Una fila del panel: la opción, su valor visible y la variable que la fija, si hay una. */
+/**
+ * Una línea que explica qué hace la opción y, cuando el valor la cambia, qué muestra ese
+ * valor. Vive acá, no en el render, para que el panel sea sólo una capa fina (S18).
+ */
+const OPTION_DESCRIPTIONS: Record<OptionId, (config: HerdrStatusConfig) => string> = {
+	style: (config) => config.style === "emoji"
+		? "Emoji for the whole sidebar: 🔍 exploring, 🧭 explore and 🔄 build."
+		: "Plain for the whole sidebar: [exploring], ↳ explore and ⏵ build.",
+	changes: (config) => config.changes
+		? "Shows +N -M, the uncommitted lines of the session's repo, remeasured on every Pi event."
+		: "No changes counter: $changes is never published and git never runs.",
+	showSubagent: (config) => config.showSubagent
+		? "Shows $subagent as ↳ explore (+1), or 🧭 explore with the emoji style."
+		: "Hides $subagent: the sidebar has no subagent row.",
+	showJobs: (config) => config.showJobs
+		? "Shows $jobs as ⏵ build (+1), or 🔄 build with the emoji style."
+		: "Hides $jobs: the sidebar has no jobs row.",
+	colors: (config) => config.colors
+		? "Herdr rows get colored cells: a Catppuccin hex per token and one rule per phase."
+		: "Herdr rows get plain tokens and Herdr paints them with its own theme.",
+	name: () => "The $name token, the panel name shown as gentle; Enter edits it, up to 32 characters.",
+};
+
+/**
+ * Descripción de una opción. Con `forcedBy`, la descripción lo dice además de la marca de la
+ * fila, y `config` tiene que ser la config en efecto, porque es el valor que el sidebar muestra.
+ */
+function describeOption(id: OptionId, config: HerdrStatusConfig, forcedBy?: string): string {
+	const text = OPTION_DESCRIPTIONS[id](normalizeConfig(config));
+	return forcedBy === undefined ? text : `${text} Fixed by ${forcedBy}, so it cannot be changed here.`;
+}
+
+/** Las dos acciones del panel, después de las opciones: guardar y guardar más sincronizar. */
+export const ACTION_IDS = ["save", "sync"] as const;
+
+export type ActionId = (typeof ACTION_IDS)[number];
+
+/** Una fila de acción del panel: guarda o guarda y sincroniza la fila de Herdr. */
+export interface ActionRow {
+	id: ActionId;
+	label: string;
+	description: string;
+}
+
+const ACTION_ROWS: readonly ActionRow[] = [
+	{
+		id: "save",
+		label: "Save changes",
+		description: "Writes the config file and republishes every token at once.",
+	},
+	{
+		id: "sync",
+		label: "Sync Herdr rows",
+		description: "Saves, then writes the Herdr row in Herdr's config with a backup and reloads it.",
+	},
+];
+
+/** Las filas de acción, con su etiqueta y su descripción, en el orden del panel. */
+export function actionRows(): ActionRow[] {
+	return ACTION_ROWS.map((row) => ({ ...row }));
+}
+
+/** Una fila del panel: la opción, su valor visible, su descripción y la variable que la fija. */
 export interface OptionRow {
 	id: OptionId;
 	label: string;
 	value: string;
+	description: string;
 	forcedBy?: string;
 }
 
@@ -217,11 +280,24 @@ export function optionValue(id: OptionId, config: HerdrStatusConfig): string {
 	return config[id] ? "on" : "off";
 }
 
-/** Filas del panel para la config y las opciones forjadas por el env. */
-export function optionRows(config: HerdrStatusConfig, forced: ForcedOptions = new Set()): OptionRow[] {
+/**
+ * Filas del panel para la config y las opciones forzadas por el env. `effective` es la config
+ * que está en efecto: una opción forzada se describe con el valor del env, no con el del
+ * archivo, porque es el que el sidebar está mostrando.
+ */
+export function optionRows(
+	config: HerdrStatusConfig,
+	forced: ForcedOptions = new Set(),
+	effective: HerdrStatusConfig = config,
+): OptionRow[] {
 	return OPTION_IDS.map((id) => {
 		const variable = forced.has(id) ? FORCED_BY[id] : undefined;
-		const row: OptionRow = { id, label: OPTION_LABELS[id], value: optionValue(id, config) };
+		const row: OptionRow = {
+			id,
+			label: OPTION_LABELS[id],
+			value: optionValue(id, config),
+			description: describeOption(id, variable === undefined ? config : effective, variable),
+		};
 		if (variable !== undefined) row.forcedBy = variable;
 		return row;
 	});
