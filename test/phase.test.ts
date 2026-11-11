@@ -18,22 +18,23 @@ function withRegistry(value: unknown, run: () => void): void {
 	}
 }
 
-test("every ODD phase is shown verbatim, plain and without ellipsis", () => {
+test("every ODD phase is shown verbatim in square brackets, without ellipsis", () => {
 	for (const phase of ODD_PHASES) {
-		assert.equal(phaseToken(phase), phase);
-		assert.equal(phaseToken(`${phase}…`), phase, "no ellipsis in the sidebar");
-		assert.equal(phaseToken(` ${phase.toUpperCase()} `), phase);
+		assert.equal(phaseToken(phase), `[${phase}]`);
+		assert.equal(phaseToken(`${phase}…`), `[${phase}]`, "no ellipsis in the sidebar");
+		assert.equal(phaseToken(` ${phase.toUpperCase()} `), `[${phase}]`);
 	}
 });
 
-test("a missing or unknown phase falls back to working", () => {
-	for (const value of [undefined, null, "", "dancing", "exploring now", 3, {}, []]) {
-		assert.equal(phaseToken(value), WORKING_PHASE, String(value));
+test("a missing or unknown phase falls back to [working]", () => {
+	for (const value of [undefined, null, "", "dancing", "exploring now", "[]", 3, {}, []]) {
+		assert.equal(phaseToken(value), `[${WORKING_PHASE}]`, String(value));
 	}
 	assert.equal(WORKING_PHASE, "working");
+	assert.equal(phaseToken(undefined), "[working]", "the brackets never stay empty");
 });
 
-test("the default reader asks gentle-pi's process-global registry for the session", () => {
+test("PRESERVE: the default reader still asks gentle-pi's process-global registry for the session", () => {
 	const asked: string[] = [];
 	withRegistry({
 		get: (sessionId: string) => {

@@ -5,14 +5,14 @@ Pi extension that shows the running subagent and what the orchestrator is doing 
 
 ```
 ● pmiguez · 1
-pi exploring
+pi [exploring]
 ↳ explore (2)
 ```
 
 - `$phase` follows the orchestrator: the ODD phase gentle-pi shows in its own prompt
-  label, as one plain lowercase word (`exploring`, `implementing`, `checking`, …), or
-  `working` while no phase is reported. It disappears when the agent goes idle, so the
-  row reads just `pi`.
+  label, as one plain lowercase word in square brackets (`[exploring]`,
+  `[implementing]`, `[checking]`, …), or `[working]` while no phase is reported. It
+  disappears when the agent goes idle, so the row reads just `pi`.
 - `$subagent` holds the `↳ ` prefix that marks the row as a subagent, the oldest
   running subagent's name, plus the total count in parentheses when two or more run. It
   disappears when no subagent runs; the arrow never shows on its own.
@@ -38,7 +38,7 @@ This package only publishes presentation metadata (`pane.report_metadata`). It n
 
 - Subagents from [gentle-pi](https://github.com/Gentleman-Programming/gentle-shell)
   (`subagent_run` / `subagent_continue`). The `$phase` token additionally reads
-  gentle-pi's ODD phase registry; without gentle-pi it shows `working` while the agent
+  gentle-pi's ODD phase registry; without gentle-pi it shows `[working]` while the agent
   runs.
 
 ## Install
@@ -57,7 +57,7 @@ Then add the rows for Pi panes in `~/.config/herdr/config.toml`.
 pi = [["state_icon", "machine", "workspace", "tab"], ["agent", "$phase"], ["$subagent"]]
 ```
 
-`["agent", "$phase"]` is the `pi exploring` line: the agent name followed by the phase.
+`["agent", "$phase"]` is the `pi [exploring]` line: the agent name followed by the phase.
 Apply it with `herdr server reload-config`. A row whose only token is unset is hidden.
 
 ## How it works
@@ -72,10 +72,12 @@ Apply it with `herdr server reload-config`. A row whose only token is unset is h
   (`Symbol.for("gentle-pi.odd-phase-registry").get(sessionId)`, `sessionId` from
   `ctx.sessionManager.getSessionId()`). That registry is an internal of gentle-pi: it
   exposes no change event (its single render-request slot belongs to the prompt) and
-  gentle-pi clears it when it settles. So the extension reads it while it republishes
-  and polls it once a second, only while the agent works, and stops on `agent_end`. A
-  missing registry, a registry without `get`, one that throws, or a value outside
-  gentle-pi's phase list all fall back to `working`; nothing is published while idle.
+  gentle-pi clears it when it settles. Polling it every second just for this token was
+  not worth it, so the extension reads it only on the events it already handles, turn
+  start (`agent_start`), `tool_call` and `tool_result` (gentle-pi's own phase reports are
+  tool calls), and clears the token on `agent_end`. A missing registry, a registry
+  without `get`, one that throws, or a value outside gentle-pi's phase list all fall
+  back to `[working]`; nothing is published while idle.
 - Both tokens share source `pi-herdr-status` and one `seq` stream (Herdr orders reports
   per source by `seq`), and every report carries both tokens.
 - Both tokens carry a 90 s TTL and are refreshed every 30 s while shown, so they expire

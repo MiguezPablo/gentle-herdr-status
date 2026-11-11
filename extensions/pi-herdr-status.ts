@@ -1,7 +1,8 @@
 /**
  * pi-herdr-status: shows the running subagent and what the orchestrator is doing in
  * the Herdr sidebar, as the `$subagent` token (`↳ explore` or `↳ worker (3)`) and the
- * `$phase` token (a gentle-pi ODD phase such as `exploring`, else `working`).
+ * `$phase` token (a gentle-pi ODD phase in square brackets, such as `[exploring]`, else
+ * `[working]`).
  *
  * Only presentation metadata (`pane.report_metadata`). Pane state
  * (working/blocked/idle) and desktop notifications stay with Herdr's official
@@ -20,7 +21,7 @@ import {
 	type PublisherOptions,
 	type Send,
 } from "../src/herdr.ts";
-import { PHASE_POLL_MS, phaseToken, readOddPhase, type PhaseReader } from "../src/phase.ts";
+import { phaseToken, readOddPhase, type PhaseReader } from "../src/phase.ts";
 import { SubagentTracker } from "../src/tracker.ts";
 
 /** gentle-pi's content-free notification bus; subagent status changes carry taskId and status. */
@@ -50,21 +51,13 @@ export function createExtension(deps: ExtensionDeps = {}) {
 		if (!herdr || env.GENTLE_PI_AGENTS_CHILD === "1") return;
 
 		const readPhase = deps.readPhase ?? readOddPhase;
-		const startInterval = deps.setInterval ?? ((fn: () => void, ms: number) => {
-			const id = setInterval(fn, ms);
-			id.unref?.();
-			return id;
-		});
-		const stopInterval = deps.clearInterval
-			?? ((id: unknown) => clearInterval(id as ReturnType<typeof setInterval>));
 
 		const tracker = new SubagentTracker();
 		let publisher: MetadataPublisher | undefined;
 		let sessionId: string | undefined;
 		let working = false;
-		let poll: unknown;
 
-		/** `$phase`: only while the agent works; the registry has no event, so it is re-read. */
+		/** `$phase`: only while the agent works, read on the turn and tool events, never polled. */
 		const phase = (): string | null => {
 			if (!working) return null;
 			if (sessionId === undefined) return phaseToken(undefined);
@@ -79,15 +72,6 @@ export function createExtension(deps: ExtensionDeps = {}) {
 			if (!publisher) return;
 			publisher.set(TOKEN, tracker.label());
 			publisher.set(PHASE_TOKEN, phase());
-		};
-
-		const syncPoll = () => {
-			const active = working && publisher !== undefined;
-			if (active && poll === undefined) poll = startInterval(publish, PHASE_POLL_MS);
-			else if (!active && poll !== undefined) {
-				stopInterval(poll);
-				poll = undefined;
-			}
 		};
 
 		const off = pi.events.on(STATUS_CHANNEL, (data: unknown) => {
@@ -116,21 +100,18 @@ export function createExtension(deps: ExtensionDeps = {}) {
 					clearInterval: deps.clearInterval,
 				});
 			}
-			syncPoll();
 			publish();
 		});
 
 		pi.on("agent_start", () => {
 			if (!publisher) return;
 			working = true;
-			syncPoll();
 			publish();
 		});
 
 		pi.on("agent_end", () => {
 			if (!publisher || !working) return;
 			working = false;
-			syncPoll();
 			publish();
 		});
 
@@ -155,7 +136,6 @@ export function createExtension(deps: ExtensionDeps = {}) {
 			tracker.reset();
 			working = false;
 			sessionId = undefined;
-			syncPoll();
 			const current = publisher;
 			publisher = undefined;
 			await current?.dispose();

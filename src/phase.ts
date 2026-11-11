@@ -1,12 +1,15 @@
 /**
  * Reads the ODD phase gentle-pi shows in its prompt label, so the sidebar can
- * repeat it next to `pi` (`pi exploring`) instead of guessing.
+ * repeat it next to `pi` (`pi [exploring]`) instead of guessing. The phase is the only
+ * bracketed token: parentheses already mark the subagent count (`↳ explore (2)`).
  *
  * Evidence (gentle-pi 4.7.0, lib/odd-phase.ts): the phase of each session lives in a
  * process-global registry stored under `Symbol.for("gentle-pi.odd-phase-registry")`,
  * because Pi loads extensions with separate module caches. The registry exposes only
  * `get(sessionId)`; there is no change event, since gentle-pi's single
- * `setRenderRequest` slot belongs to its prompt.
+ * `setRenderRequest` slot belongs to its prompt. Because polling the registry every
+ * second only for this token was not worth it, the extension reads it on the events it
+ * already handles (turn start, tool call, tool result) and never on a timer of its own.
  *
  * The registry is optional: gentle-pi may not be loaded, an older version may not
  * expose `get`, a future one may change the shape, or it may throw. Every one of those
@@ -14,7 +17,7 @@
  * row never shows a phase that is not actually running.
  */
 
-/** Phases gentle-pi cycles through; each is shown verbatim as one lowercase word. */
+/** Phases gentle-pi cycles through; each is shown verbatim as one lowercase word, bracketed. */
 export const ODD_PHASES = [
 	"authorizing",
 	"exploring",
@@ -28,9 +31,6 @@ export const ODD_PHASES = [
 
 /** Shown while the agent works but gentle-pi reports no usable phase. */
 export const WORKING_PHASE = "working";
-
-/** How often the registry is re-read while the agent works (gentle-pi has no event). */
-export const PHASE_POLL_MS = 1_000;
 
 /** gentle-pi's registry key; the same symbol is the only bridge across loaders. */
 const REGISTRY = Symbol.for("gentle-pi.odd-phase-registry");
@@ -50,8 +50,13 @@ export const readOddPhase: PhaseReader = (sessionId) => {
 	}
 };
 
-/** Sidebar word for a reported phase: a known ODD phase, else `working`. */
+/** Sidebar token for a reported phase: `[<known ODD phase>]`, else `[working]`. */
 export function phaseToken(value: unknown): string {
+	return `[${phaseWord(value)}]`;
+}
+
+/** The bare phase word, so the brackets are added in exactly one place. */
+function phaseWord(value: unknown): string {
 	if (typeof value !== "string") return WORKING_PHASE;
 	const word = value.trim().toLowerCase().replace(/[\u2026.]+$/u, "").trim();
 	return (ODD_PHASES as readonly string[]).includes(word) ? word : WORKING_PHASE;

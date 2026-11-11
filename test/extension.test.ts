@@ -3,7 +3,6 @@ import { test } from "node:test";
 
 import { createExtension } from "../extensions/pi-herdr-status.ts";
 import { PHASE_TOKEN, REFRESH_MS, TOKEN, TTL_MS, type HerdrRequest } from "../src/herdr.ts";
-import { PHASE_POLL_MS } from "../src/phase.ts";
 
 type Handler = (event: unknown, ctx: unknown) => unknown;
 type PhaseReader = (sessionId: string) => unknown;
@@ -53,10 +52,9 @@ function load(env: Record<string, string | undefined> = HERDR_ENV, deps: { readP
 		tokens: () => sent.map((request) => request.params.tokens[TOKEN] ?? null),
 		phases: () => sent.map((request) => request.params.tokens[PHASE_TOKEN] ?? null),
 		last: () => sent.at(-1)?.params,
-		poll: () => tick(PHASE_POLL_MS),
 		refresh: () => tick(REFRESH_MS),
-		pollTimers: () => timerCount(PHASE_POLL_MS),
 		refreshTimers: () => timerCount(REFRESH_MS),
+		timerMs: () => [...timers.values()].map((timer) => timer.ms),
 	};
 }
 
@@ -101,7 +99,7 @@ test("session start wipes any stale token, then a subagent shows and clears", as
 test("R1: while the agent works $phase shows the current ODD phase next to pi", async () => {
 	let phase: unknown = "exploring";
 	let askedSession: string | undefined;
-	const { fire, last, phases, tokens, poll } = load(HERDR_ENV, {
+	const { fire, last, phases, tokens, timerMs } = load(HERDR_ENV, {
 		readPhase: (sessionId) => {
 			askedSession = sessionId;
 			return phase;
@@ -110,18 +108,43 @@ test("R1: while the agent works $phase shows the current ODD phase next to pi", 
 	await fire("session_start", { reason: "startup" });
 	await fire("agent_start", { type: "agent_start" });
 	assert.equal(askedSession, "s1", "the registry is keyed by this session");
-	assert.deepEqual(last()!.tokens, { [TOKEN]: null, [PHASE_TOKEN]: "exploring" }, "row reads pi exploring");
+	assert.deepEqual(last()!.tokens, { [TOKEN]: null, [PHASE_TOKEN]: "[exploring]" }, "row reads pi [exploring]");
 	assert.equal(tokens().at(-1), null, "the subagent token stays untouched");
 	phase = "implementing";
 	await fire("tool_call", { toolCallId: "c1", toolName: "bash", input: { command: "ls" } });
-	assert.equal(phases().at(-1), "implementing", "our own events re-read the phase");
+	assert.equal(phases().at(-1), "[implementing]", "a tool call re-reads the phase");
 	phase = "Checking…";
-	await poll();
-	assert.equal(phases().at(-1), "checking", "the poll re-reads it, lowercase and without ellipsis");
-	assert.deepEqual(last()!.tokens, { [TOKEN]: null, [PHASE_TOKEN]: "checking" });
+	await fire("tool_result", { toolCallId: "c1", toolName: "gentle_odd_phase", details: {} });
+	assert.equal(phases().at(-1), "[checking]", "a tool result re-reads it, lowercase and without ellipsis");
+	assert.deepEqual(last()!.tokens, { [TOKEN]: null, [PHASE_TOKEN]: "[checking]" });
+	assert.deepEqual(timerMs(), [REFRESH_MS], "the phase has no timer of its own");
 });
 
-test("R1: an absent, invalid or throwing phase reads as working", async () => {
+test("R1: the phase is read on turn and tool events only, never polled", async () => {
+	let reads = 0;
+	const { fire, refresh, timerMs } = load(HERDR_ENV, {
+		readPhase: () => {
+			reads += 1;
+			return "exploring";
+		},
+	});
+	await fire("session_start", { reason: "startup" });
+	assert.equal(reads, 0, "nothing is read while idle");
+	await fire("agent_start", { type: "agent_start" });
+	assert.equal(reads, 1, "the turn start reads the phase");
+	await fire("tool_call", { toolCallId: "c1", toolName: "bash", input: { command: "ls" } });
+	assert.equal(reads, 2, "a tool call reads it again");
+	await fire("tool_result", { toolCallId: "c1", toolName: "gentle_odd_phase", details: {} });
+	assert.equal(reads, 3, "a tool result reads it again");
+	assert.deepEqual(timerMs(), [REFRESH_MS], "the only timer is the publisher's TTL refresh, not a poll");
+	await refresh();
+	assert.equal(reads, 3, "the TTL refresh republishes the value, it does not re-read the registry");
+	await fire("agent_end", { type: "agent_end", messages: [] });
+	assert.equal(reads, 3, "ending the turn only clears the token");
+	assert.deepEqual(timerMs(), [], "no timer survives the turn");
+});
+
+test("R1: an absent, invalid or throwing phase reads as [working]", async () => {
 	const readers: (PhaseReader | undefined)[] = [
 		undefined,
 		() => undefined,
@@ -133,7 +156,7 @@ test("R1: an absent, invalid or throwing phase reads as working", async () => {
 		const { fire, last } = load(HERDR_ENV, readPhase ? { readPhase } : {});
 		await fire("session_start", { reason: "startup" });
 		await fire("agent_start", { type: "agent_start" });
-		assert.equal(last()!.tokens[PHASE_TOKEN], "working", String(readPhase));
+		assert.equal(last()!.tokens[PHASE_TOKEN], "[working]", String(readPhase));
 	}
 });
 
@@ -142,7 +165,7 @@ test("R1: the phase and the subagent token are published together in one report"
 	await fire("session_start", { reason: "startup" });
 	await fire("tool_call", { toolCallId: "c1", toolName: "subagent_run", input: { agent: "explore", task: "x" } });
 	await fire("agent_start", { type: "agent_start" });
-	assert.deepEqual(sent.at(-1)!.params.tokens, { [TOKEN]: "↳ explore", [PHASE_TOKEN]: "implementing" });
+	assert.deepEqual(sent.at(-1)!.params.tokens, { [TOKEN]: "↳ explore", [PHASE_TOKEN]: "[implementing]" });
 	const seqs = sent.map((request) => request.params.seq as number);
 	assert.deepEqual(seqs, [...seqs].sort((a, b) => a - b), "one seq stream for both tokens");
 	assert.equal(new Set(seqs).size, seqs.length);
@@ -154,39 +177,36 @@ test("R2: session start publishes an unset phase so a stale token disappears", a
 	assert.deepEqual(last()!.tokens, { [TOKEN]: null, [PHASE_TOKEN]: null });
 });
 
-test("R2: the phase disappears when the turn ends and on shutdown, and the poll stops", async () => {
-	const { fire, last, sent, poll, pollTimers } = load(HERDR_ENV, { readPhase: () => "implementing" });
+test("R2: the phase disappears when the turn ends and on shutdown, leaving no timer", async () => {
+	const { fire, last, timerMs } = load(HERDR_ENV, { readPhase: () => "implementing" });
 	await fire("session_start", { reason: "startup" });
 	await fire("agent_start", { type: "agent_start" });
-	assert.equal(last()!.tokens[PHASE_TOKEN], "implementing");
-	assert.equal(pollTimers(), 1, "the poll runs only while the agent works");
+	assert.equal(last()!.tokens[PHASE_TOKEN], "[implementing]");
 	await fire("agent_end", { type: "agent_end", messages: [] });
 	assert.deepEqual(last()!.tokens, { [TOKEN]: null, [PHASE_TOKEN]: null }, "just pi");
-	assert.equal(pollTimers(), 0, "idle stops the poll");
-	const idle = sent.length;
-	await poll();
-	assert.equal(sent.length, idle, "nothing is read or sent while idle");
+	assert.deepEqual(timerMs(), [], "idle stops the refresh and there is no poll to stop");
 	await fire("agent_start", { type: "agent_start" });
-	assert.equal(last()!.tokens[PHASE_TOKEN], "implementing");
+	assert.equal(last()!.tokens[PHASE_TOKEN], "[implementing]");
 	await fire("session_shutdown", { reason: "quit" });
 	assert.deepEqual(last()!.tokens, { [TOKEN]: null, [PHASE_TOKEN]: null });
-	assert.equal(pollTimers(), 0);
+	assert.deepEqual(timerMs(), []);
 });
 
 test("R4: the phase token never stays stale: TTL, refresh while shown, clear when idle", async () => {
-	const { fire, last, refresh, refreshTimers, pollTimers } = load(HERDR_ENV, { readPhase: () => "planning" });
+	const { fire, last, refresh, refreshTimers, timerMs } = load(HERDR_ENV, { readPhase: () => "planning" });
 	await fire("session_start", { reason: "startup" });
 	await fire("agent_start", { type: "agent_start" });
 	assert.equal(last()!.ttl_ms, TTL_MS);
 	assert.ok(TTL_MS > REFRESH_MS * 2, "two missed refreshes still keep the token");
 	assert.equal(refreshTimers(), 1);
+	assert.deepEqual(timerMs(), [REFRESH_MS], "only the TTL refresh, never a phase poll");
 	await refresh();
-	assert.deepEqual(last()!.tokens, { [TOKEN]: null, [PHASE_TOKEN]: "planning" });
+	assert.deepEqual(last()!.tokens, { [TOKEN]: null, [PHASE_TOKEN]: "[planning]" });
 	assert.equal(last()!.ttl_ms, TTL_MS);
 	await fire("agent_end", { type: "agent_end", messages: [] });
 	assert.equal(last()!.ttl_ms, undefined);
 	assert.equal(refreshTimers(), 0);
-	assert.equal(pollTimers(), 0);
+	assert.deepEqual(timerMs(), []);
 });
 
 test("a background subagent clears when the gentle-pi bus reports it finished", async () => {
@@ -213,7 +233,7 @@ test("opening UI or asking the user never publishes anything", async () => {
 	await fire("ui_prompt_end", { kind: "custom" });
 	await emit("herdr:blocked", { active: true, label: "question" });
 	assert.equal(sent.length, before);
-	assert.equal(last()!.tokens[PHASE_TOKEN], "implementing", "a prompt does not change the phase");
+	assert.equal(last()!.tokens[PHASE_TOKEN], "[implementing]", "a prompt does not change the phase");
 	assert.ok(sent.every((request) => request.method === "pane.report_metadata"), "never pane.report_agent");
 });
 
