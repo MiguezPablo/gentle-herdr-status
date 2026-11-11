@@ -2,16 +2,21 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import { createExtension } from "../extensions/pi-herdr-status.ts";
-import { TOKEN, type HerdrRequest } from "../src/herdr.ts";
+import { PHASE_TOKEN, REFRESH_MS, TOKEN, TTL_MS, type HerdrRequest } from "../src/herdr.ts";
+import { PHASE_POLL_MS } from "../src/phase.ts";
 
 type Handler = (event: unknown, ctx: unknown) => unknown;
+type PhaseReader = (sessionId: string) => unknown;
 
 const HERDR_ENV = { HERDR_ENV: "1", HERDR_PANE_ID: "w1:p1", HERDR_SOCKET_PATH: "/tmp/herdr.sock" };
+const TUI_CTX = { mode: "tui", sessionManager: { getSessionId: () => "s1" } };
 
-function load(env: Record<string, string | undefined> = HERDR_ENV) {
+function load(env: Record<string, string | undefined> = HERDR_ENV, deps: { readPhase?: PhaseReader } = {}) {
 	const handlers = new Map<string, Handler>();
 	const bus = new Map<string, (data: unknown) => void>();
 	const sent: HerdrRequest[] = [];
+	const timers = new Map<number, { fn: () => void; ms: number }>();
+	let nextTimer = 1;
 	const pi = {
 		on: (name: string, handler: Handler) => { handlers.set(name, handler); },
 		events: {
@@ -21,19 +26,38 @@ function load(env: Record<string, string | undefined> = HERDR_ENV) {
 	createExtension({
 		env,
 		send: async (request) => { sent.push(request); return true; },
-		setInterval: () => 0,
-		clearInterval: () => {},
+		readPhase: deps.readPhase,
+		setInterval: (fn, ms) => { const id = nextTimer++; timers.set(id, { fn, ms }); return id; },
+		clearInterval: (id) => { timers.delete(id as number); },
 	})(pi as never);
-	const fire = async (name: string, event: unknown = {}, ctx: unknown = { mode: "tui" }) => {
+	const flush = () => new Promise((resolve) => setImmediate(resolve));
+	const fire = async (name: string, event: unknown = {}, ctx: unknown = TUI_CTX) => {
 		await handlers.get(name)?.(event, ctx);
-		await new Promise((resolve) => setImmediate(resolve));
+		await flush();
 	};
 	const emit = async (name: string, data: unknown) => {
 		bus.get(name)?.(data);
-		await new Promise((resolve) => setImmediate(resolve));
+		await flush();
 	};
-	const tokens = () => sent.map((request) => request.params.tokens[TOKEN]);
-	return { handlers, bus, sent, fire, emit, tokens };
+	const tick = async (ms: number) => {
+		for (const timer of [...timers.values()]) if (timer.ms === ms) timer.fn();
+		await flush();
+	};
+	const timerCount = (ms: number) => [...timers.values()].filter((timer) => timer.ms === ms).length;
+	return {
+		handlers,
+		bus,
+		sent,
+		fire,
+		emit,
+		tokens: () => sent.map((request) => request.params.tokens[TOKEN] ?? null),
+		phases: () => sent.map((request) => request.params.tokens[PHASE_TOKEN] ?? null),
+		last: () => sent.at(-1)?.params,
+		poll: () => tick(PHASE_POLL_MS),
+		refresh: () => tick(REFRESH_MS),
+		pollTimers: () => timerCount(PHASE_POLL_MS),
+		refreshTimers: () => timerCount(REFRESH_MS),
+	};
 }
 
 test("outside Herdr nothing is registered", () => {
@@ -42,23 +66,29 @@ test("outside Herdr nothing is registered", () => {
 	assert.equal(bus.size, 0);
 });
 
-test("a gentle-agents child never registers", () => {
-	const { handlers, bus } = load({ ...HERDR_ENV, GENTLE_PI_AGENTS_CHILD: "1" });
+test("R3: a gentle-agents child never publishes anything", async () => {
+	const { handlers, bus, fire, sent } = load({ ...HERDR_ENV, GENTLE_PI_AGENTS_CHILD: "1" }, { readPhase: () => "exploring" });
 	assert.equal(handlers.size, 0);
 	assert.equal(bus.size, 0);
+	await fire("session_start", { reason: "startup" });
+	await fire("agent_start", { type: "agent_start" });
+	await fire("tool_call", { toolCallId: "c1", toolName: "subagent_run", input: { agent: "explore", task: "x" } });
+	assert.equal(sent.length, 0);
 });
 
-test("a non-TUI session (rpc, json, print) never publishes", async () => {
-	const { fire, sent } = load();
-	await fire("session_start", { reason: "startup" }, { mode: "rpc" });
+test("R3: a non-TUI session (rpc, json, print) never publishes a phase", async () => {
+	const { fire, sent } = load(HERDR_ENV, { readPhase: () => "exploring" });
+	await fire("session_start", { reason: "startup" }, { mode: "rpc", sessionManager: { getSessionId: () => "s1" } });
+	await fire("agent_start", { type: "agent_start" });
 	await fire("tool_call", { toolCallId: "c1", toolName: "subagent_run", input: { agent: "explore", task: "x" } });
 	assert.equal(sent.length, 0);
 });
 
 test("session start wipes any stale token, then a subagent shows and clears", async () => {
-	const { fire, tokens } = load();
+	const { fire, tokens, phases } = load();
 	await fire("session_start", { reason: "startup" });
 	assert.deepEqual(tokens(), [null]);
+	assert.deepEqual(phases(), [null]);
 	await fire("tool_call", { toolCallId: "c1", toolName: "subagent_run", input: { agent: "explore", task: "x" } });
 	assert.deepEqual(tokens(), [null, "↳ explore"]);
 	await fire("tool_result", {
@@ -66,6 +96,97 @@ test("session start wipes any stale token, then a subagent shows and clears", as
 		details: { gentleAgents: { taskId: "t1", agent: "explore", status: "completed" } },
 	});
 	assert.deepEqual(tokens(), [null, "↳ explore", null]);
+});
+
+test("R1: while the agent works $phase shows the current ODD phase next to pi", async () => {
+	let phase: unknown = "exploring";
+	let askedSession: string | undefined;
+	const { fire, last, phases, tokens, poll } = load(HERDR_ENV, {
+		readPhase: (sessionId) => {
+			askedSession = sessionId;
+			return phase;
+		},
+	});
+	await fire("session_start", { reason: "startup" });
+	await fire("agent_start", { type: "agent_start" });
+	assert.equal(askedSession, "s1", "the registry is keyed by this session");
+	assert.deepEqual(last()!.tokens, { [TOKEN]: null, [PHASE_TOKEN]: "exploring" }, "row reads pi exploring");
+	assert.equal(tokens().at(-1), null, "the subagent token stays untouched");
+	phase = "implementing";
+	await fire("tool_call", { toolCallId: "c1", toolName: "bash", input: { command: "ls" } });
+	assert.equal(phases().at(-1), "implementing", "our own events re-read the phase");
+	phase = "Checking…";
+	await poll();
+	assert.equal(phases().at(-1), "checking", "the poll re-reads it, lowercase and without ellipsis");
+	assert.deepEqual(last()!.tokens, { [TOKEN]: null, [PHASE_TOKEN]: "checking" });
+});
+
+test("R1: an absent, invalid or throwing phase reads as working", async () => {
+	const readers: (PhaseReader | undefined)[] = [
+		undefined,
+		() => undefined,
+		() => "dancing",
+		() => null,
+		() => { throw new Error("boom"); },
+	];
+	for (const readPhase of readers) {
+		const { fire, last } = load(HERDR_ENV, readPhase ? { readPhase } : {});
+		await fire("session_start", { reason: "startup" });
+		await fire("agent_start", { type: "agent_start" });
+		assert.equal(last()!.tokens[PHASE_TOKEN], "working", String(readPhase));
+	}
+});
+
+test("R1: the phase and the subagent token are published together in one report", async () => {
+	const { fire, sent } = load(HERDR_ENV, { readPhase: () => "implementing" });
+	await fire("session_start", { reason: "startup" });
+	await fire("tool_call", { toolCallId: "c1", toolName: "subagent_run", input: { agent: "explore", task: "x" } });
+	await fire("agent_start", { type: "agent_start" });
+	assert.deepEqual(sent.at(-1)!.params.tokens, { [TOKEN]: "↳ explore", [PHASE_TOKEN]: "implementing" });
+	const seqs = sent.map((request) => request.params.seq as number);
+	assert.deepEqual(seqs, [...seqs].sort((a, b) => a - b), "one seq stream for both tokens");
+	assert.equal(new Set(seqs).size, seqs.length);
+});
+
+test("R2: session start publishes an unset phase so a stale token disappears", async () => {
+	const { fire, last } = load(HERDR_ENV, { readPhase: () => "exploring" });
+	await fire("session_start", { reason: "startup" });
+	assert.deepEqual(last()!.tokens, { [TOKEN]: null, [PHASE_TOKEN]: null });
+});
+
+test("R2: the phase disappears when the turn ends and on shutdown, and the poll stops", async () => {
+	const { fire, last, sent, poll, pollTimers } = load(HERDR_ENV, { readPhase: () => "implementing" });
+	await fire("session_start", { reason: "startup" });
+	await fire("agent_start", { type: "agent_start" });
+	assert.equal(last()!.tokens[PHASE_TOKEN], "implementing");
+	assert.equal(pollTimers(), 1, "the poll runs only while the agent works");
+	await fire("agent_end", { type: "agent_end", messages: [] });
+	assert.deepEqual(last()!.tokens, { [TOKEN]: null, [PHASE_TOKEN]: null }, "just pi");
+	assert.equal(pollTimers(), 0, "idle stops the poll");
+	const idle = sent.length;
+	await poll();
+	assert.equal(sent.length, idle, "nothing is read or sent while idle");
+	await fire("agent_start", { type: "agent_start" });
+	assert.equal(last()!.tokens[PHASE_TOKEN], "implementing");
+	await fire("session_shutdown", { reason: "quit" });
+	assert.deepEqual(last()!.tokens, { [TOKEN]: null, [PHASE_TOKEN]: null });
+	assert.equal(pollTimers(), 0);
+});
+
+test("R4: the phase token never stays stale: TTL, refresh while shown, clear when idle", async () => {
+	const { fire, last, refresh, refreshTimers, pollTimers } = load(HERDR_ENV, { readPhase: () => "planning" });
+	await fire("session_start", { reason: "startup" });
+	await fire("agent_start", { type: "agent_start" });
+	assert.equal(last()!.ttl_ms, TTL_MS);
+	assert.ok(TTL_MS > REFRESH_MS * 2, "two missed refreshes still keep the token");
+	assert.equal(refreshTimers(), 1);
+	await refresh();
+	assert.deepEqual(last()!.tokens, { [TOKEN]: null, [PHASE_TOKEN]: "planning" });
+	assert.equal(last()!.ttl_ms, TTL_MS);
+	await fire("agent_end", { type: "agent_end", messages: [] });
+	assert.equal(last()!.ttl_ms, undefined);
+	assert.equal(refreshTimers(), 0);
+	assert.equal(pollTimers(), 0);
 });
 
 test("a background subagent clears when the gentle-pi bus reports it finished", async () => {
@@ -84,13 +205,15 @@ test("a background subagent clears when the gentle-pi bus reports it finished", 
 });
 
 test("opening UI or asking the user never publishes anything", async () => {
-	const { fire, emit, sent } = load();
+	const { fire, emit, sent, last } = load(HERDR_ENV, { readPhase: () => "implementing" });
 	await fire("session_start", { reason: "startup" });
+	await fire("agent_start", { type: "agent_start" });
 	const before = sent.length;
 	await fire("ui_prompt_start", { kind: "custom" });
 	await fire("ui_prompt_end", { kind: "custom" });
 	await emit("herdr:blocked", { active: true, label: "question" });
 	assert.equal(sent.length, before);
+	assert.equal(last()!.tokens[PHASE_TOKEN], "implementing", "a prompt does not change the phase");
 	assert.ok(sent.every((request) => request.method === "pane.report_metadata"), "never pane.report_agent");
 });
 

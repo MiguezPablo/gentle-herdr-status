@@ -4,6 +4,8 @@ import { createConnection } from "node:net";
 export const SOURCE = "pi-herdr-status";
 /** Rendered in Herdr sidebar rows as `$subagent`. */
 export const TOKEN = "subagent";
+/** Rendered in Herdr sidebar rows as `$phase`: what the orchestrator is doing. */
+export const PHASE_TOKEN = "phase";
 /** Pane agent the token applies to (Herdr's official Pi integration reports `pi`). */
 export const AGENT = "pi";
 /** A shown token expires on its own if this process dies, so it can never stay stale. */
@@ -12,10 +14,12 @@ export const TTL_MS = 90_000;
 export const REFRESH_MS = 30_000;
 const SEND_TIMEOUT_MS = 1_000;
 
+/** Token name -> value, `null` when the token is unset. */
+export type Tokens = Record<string, string | null>;
 export type HerdrRequest = {
 	id: string;
 	method: string;
-	params: Record<string, unknown> & { tokens: Record<string, string | null> };
+	params: Record<string, unknown> & { tokens: Tokens };
 };
 export type Send = (request: HerdrRequest) => Promise<boolean>;
 export type Env = Record<string, string | undefined>;
@@ -51,6 +55,8 @@ export function socketSend(path: string, timeoutMs = SEND_TIMEOUT_MS): Send {
 
 export type PublisherOptions = {
 	pane: string;
+	/** Tokens this source owns; every report carries all of them, `null` when unset. */
+	tokens?: readonly string[];
 	send: Send;
 	setInterval?: (fn: () => void, ms: number) => unknown;
 	clearInterval?: (id: unknown) => void;
@@ -58,10 +64,12 @@ export type PublisherOptions = {
 };
 
 /**
- * Publishes one metadata token. Unchanged values are not resent, a shown value is
- * refreshed before its TTL, and values set while a send is in flight collapse into
- * the latest one. The first value is always sent so a token left by a previous
- * process is wiped.
+ * Publishes the metadata tokens of one source. Herdr orders reports of a source by
+ * `seq`, so several tokens share one publisher and one monotonic seq stream: every
+ * report carries the current value of every known token, `null` when unset. Unchanged
+ * values are not resent, a shown value is refreshed before its TTL, and values set
+ * while a send is in flight collapse into the latest one. The first report is always
+ * sent so tokens left by a previous process are wiped.
  */
 export class MetadataPublisher {
 	private readonly pane: string;
@@ -69,8 +77,9 @@ export class MetadataPublisher {
 	private readonly startInterval: (fn: () => void, ms: number) => unknown;
 	private readonly stopInterval: (id: unknown) => void;
 	private seq: number;
-	private current: string | null | undefined;
-	private pending: { value: string | null } | undefined;
+	private readonly values = new Map<string, string | null>();
+	private reported = false;
+	private pending: Tokens | undefined;
 	private inFlight: Promise<void> | undefined;
 	private refresh: unknown;
 	private disposed = false;
@@ -78,6 +87,7 @@ export class MetadataPublisher {
 	constructor(options: PublisherOptions) {
 		this.pane = options.pane;
 		this.send = options.send;
+		for (const token of options.tokens ?? []) this.values.set(token, null);
 		this.startInterval = options.setInterval ?? ((fn, ms) => {
 			const id = setInterval(fn, ms);
 			id.unref?.();
@@ -89,29 +99,35 @@ export class MetadataPublisher {
 		this.seq = (options.now ?? Date.now)() * 1000;
 	}
 
-	set(value: string | null): void {
-		if (this.disposed || value === this.current) return;
-		this.current = value;
+	set(token: string, value: string | null): void {
+		if (this.disposed) return;
+		if (this.reported && this.values.has(token) && this.values.get(token) === value) return;
+		this.values.set(token, value);
 		this.syncRefresh();
-		this.enqueue(value);
+		this.enqueue();
 	}
 
 	async dispose(): Promise<void> {
 		if (this.disposed) return;
-		if (this.current) {
-			this.current = null;
-			this.enqueue(null);
-		}
 		this.disposed = true;
+		if (this.shown()) {
+			for (const token of this.values.keys()) this.values.set(token, null);
+			this.enqueue();
+		}
 		this.syncRefresh();
 		while (this.inFlight) await this.inFlight;
 	}
 
+	private shown(): boolean {
+		for (const value of this.values.values()) if (typeof value === "string") return true;
+		return false;
+	}
+
 	private syncRefresh(): void {
-		const shown = !this.disposed && typeof this.current === "string";
+		const shown = !this.disposed && this.shown();
 		if (shown && this.refresh === undefined) {
 			this.refresh = this.startInterval(() => {
-				if (typeof this.current === "string") this.enqueue(this.current);
+				if (this.shown()) this.enqueue();
 			}, REFRESH_MS);
 		} else if (!shown && this.refresh !== undefined) {
 			this.stopInterval(this.refresh);
@@ -119,33 +135,40 @@ export class MetadataPublisher {
 		}
 	}
 
-	private enqueue(value: string | null): void {
-		this.pending = { value };
+	private enqueue(): void {
+		this.reported = true;
+		this.pending = this.snapshot();
 		if (!this.inFlight) this.inFlight = this.drain();
+	}
+
+	private snapshot(): Tokens {
+		const tokens: Tokens = {};
+		for (const [token, value] of this.values) tokens[token] = value;
+		return tokens;
 	}
 
 	private async drain(): Promise<void> {
 		try {
 			while (this.pending) {
-				const { value } = this.pending;
+				const tokens = this.pending;
 				this.pending = undefined;
-				await this.send(this.request(value)).catch(() => false);
+				await this.send(this.request(tokens)).catch(() => false);
 			}
 		} finally {
 			this.inFlight = undefined;
 		}
 	}
 
-	private request(value: string | null): HerdrRequest {
+	private request(tokens: Tokens): HerdrRequest {
 		const seq = ++this.seq;
 		const params: HerdrRequest["params"] = {
 			pane_id: this.pane,
 			source: SOURCE,
 			agent: AGENT,
-			tokens: { [TOKEN]: value },
+			tokens,
 			seq,
 		};
-		if (value !== null) params.ttl_ms = TTL_MS;
+		if (Object.values(tokens).some((value) => typeof value === "string")) params.ttl_ms = TTL_MS;
 		return { id: `${SOURCE}:${seq}`, method: "pane.report_metadata", params };
 	}
 }

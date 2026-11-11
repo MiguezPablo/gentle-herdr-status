@@ -1,16 +1,21 @@
 # pi-herdr-status
 
-Pi extension that shows the running subagent in the [Herdr](https://herdr.dev) sidebar:
+Pi extension that shows the running subagent and what the orchestrator is doing in the
+[Herdr](https://herdr.dev) sidebar:
 
 ```
 ● pmiguez · 1
-pi
+pi exploring
 ↳ explore (2)
 ```
 
-The `$subagent` token holds the `↳ ` prefix that marks the row as a subagent, the oldest
-running subagent's name, plus the total count in parentheses when two or more run. It
-disappears when no subagent runs; the arrow never shows on its own.
+- `$phase` follows the orchestrator: the ODD phase gentle-pi shows in its own prompt
+  label, as one plain lowercase word (`exploring`, `implementing`, `checking`, …), or
+  `working` while no phase is reported. It disappears when the agent goes idle, so the
+  row reads just `pi`.
+- `$subagent` holds the `↳ ` prefix that marks the row as a subagent, the oldest
+  running subagent's name, plus the total count in parentheses when two or more run. It
+  disappears when no subagent runs; the arrow never shows on its own.
 
 ## What it does not do
 
@@ -32,7 +37,9 @@ This package only publishes presentation metadata (`pane.report_metadata`). It n
   ```
 
 - Subagents from [gentle-pi](https://github.com/Gentleman-Programming/gentle-shell)
-  (`subagent_run` / `subagent_continue`).
+  (`subagent_run` / `subagent_continue`). The `$phase` token additionally reads
+  gentle-pi's ODD phase registry; without gentle-pi it shows `working` while the agent
+  runs.
 
 ## Install
 
@@ -42,14 +49,15 @@ From a local checkout:
 pi install /absolute/path/to/pi-herdr-status
 ```
 
-Then add a `$subagent` row for Pi panes in `~/.config/herdr/config.toml`.
+Then add the rows for Pi panes in `~/.config/herdr/config.toml`.
 `rows_by_agent` replaces the default rows, so they are listed again:
 
 ```toml
 [ui.sidebar.agents.rows_by_agent]
-pi = [["state_icon", "machine", "workspace", "tab"], ["agent"], ["$subagent"]]
+pi = [["state_icon", "machine", "workspace", "tab"], ["agent", "$phase"], ["$subagent"]]
 ```
 
+`["agent", "$phase"]` is the `pi exploring` line: the agent name followed by the phase.
 Apply it with `herdr server reload-config`. A row whose only token is unset is hidden.
 
 ## How it works
@@ -60,8 +68,18 @@ Apply it with `herdr server reload-config`. A row whose only token is unset is h
   (`completed`, `failed`, `cancelled`, `timed_out`).
 - Only the interactive TUI session publishes; gentle-agents children
   (`GENTLE_PI_AGENTS_CHILD=1`, `--mode rpc`) never do.
-- The token carries a 90 s TTL and is refreshed every 30 s while shown, so it expires
-  even if Pi dies. It is cleared on session start and shutdown.
+- The phase comes from gentle-pi's process-global ODD registry
+  (`Symbol.for("gentle-pi.odd-phase-registry").get(sessionId)`, `sessionId` from
+  `ctx.sessionManager.getSessionId()`). That registry is an internal of gentle-pi: it
+  exposes no change event (its single render-request slot belongs to the prompt) and
+  gentle-pi clears it when it settles. So the extension reads it while it republishes
+  and polls it once a second, only while the agent works, and stops on `agent_end`. A
+  missing registry, a registry without `get`, one that throws, or a value outside
+  gentle-pi's phase list all fall back to `working`; nothing is published while idle.
+- Both tokens share source `pi-herdr-status` and one `seq` stream (Herdr orders reports
+  per source by `seq`), and every report carries both tokens.
+- Both tokens carry a 90 s TTL and are refreshed every 30 s while shown, so they expire
+  even if Pi dies. They are cleared on session start and shutdown.
 - Source `pi-herdr-status`, agent `pi`.
 
 ## Development
