@@ -219,7 +219,7 @@ The row then reads `gentle · 🔍 exploring` instead of `gentle · [exploring]`
 | `deciding` | 🤔 | `🤔 deciding` |
 | `planning` | 📝 | `📝 planning` |
 | `implementing` | 🔨 | `🔨 implementing` |
-| `checking` | ✅ | `✅ checking` |
+| `checking` | 🔬 | `🔬 checking` |
 | `closing` | 🏁 | `🏁 closing` |
 | no phase (`working`) | ⏳ | `⏳ working` |
 

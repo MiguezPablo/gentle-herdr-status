@@ -44,7 +44,7 @@ test("S11: with the emoji style each ODD phase is emoji + word, without brackets
 		deciding: "🤔",
 		planning: "📝",
 		implementing: "🔨",
-		checking: "✅",
+		checking: "🔬",
 		closing: "🏁",
 	};
 	assert.deepEqual(PHASE_EMOJIS, expected, "the map is exactly the agreed one");

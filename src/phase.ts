@@ -57,7 +57,7 @@ export const PHASE_EMOJIS: Readonly<Record<string, string>> = {
 	deciding: "🤔",
 	planning: "📝",
 	implementing: "🔨",
-	checking: "✅",
+	checking: "🔬",
 	closing: "🏁",
 };
 
