@@ -100,26 +100,25 @@ const OPTION_LABELS: Record<OptionId, string> = {
  * Una línea que explica qué hace la opción y, cuando el valor la cambia, qué muestra ese
  * valor. Vive acá, no en el render, para que el panel sea sólo una capa fina (S18).
  *
- * Las filas de los tokens describen lo que se ve en la barra y nombran el token sólo al
- * final, como dato para quien arma la fila de Herdr a mano (S19).
+ * Describen lo que se ve en la barra, sin la jerga interna de los tokens de metadata (S19).
  */
 const OPTION_DESCRIPTIONS: Record<OptionId, (config: HerdrStatusConfig) => string> = {
 	style: (config) => config.style === "emoji"
 		? "Emoji for the whole sidebar: 🔍 exploring, 🧭 explore and 🔄 build."
 		: "Plain for the whole sidebar: [exploring], ↳ explore and ⏵ build.",
 	changes: (config) => config.changes
-		? "Shows +N -M, the uncommitted lines of the session's repo, next to the name and remeasured on every Pi event. Herdr token: changes."
-		: "No counter next to the name, and git never runs. Herdr token: changes.",
+		? "Shows +N -M, the uncommitted lines of the session's repo, next to the name and remeasured on every Pi event."
+		: "No counter next to the name, and git never runs.",
 	showSubagent: (config) => config.showSubagent
-		? "Shows the running subagent in its own row as ↳ explore (+1), or 🧭 explore with the emoji style. Herdr token: subagent."
-		: "No subagent row: the sidebar shows only the name, the phase and the jobs. Herdr token: subagent.",
+		? "Shows the running subagent in its own row as ↳ explore (+1), or 🧭 explore with the emoji style."
+		: "No subagent row: the sidebar shows only the name and the phase.",
 	showJobs: (config) => config.showJobs
-		? "Shows the running jobs in their own row as ⏵ build (+1), or 🔄 build with the emoji style. Herdr token: jobs."
-		: "No jobs row: a running job never reaches the sidebar. Herdr token: jobs.",
+		? "Shows the running jobs in their own row as ⏵ build (+1), or 🔄 build with the emoji style."
+		: "No jobs row: a running job never reaches the sidebar.",
 	colors: (config) => config.colors
-		? "Herdr rows get colored cells: a Catppuccin hex per token and one rule per phase."
-		: "Herdr rows get plain tokens and Herdr paints them with its own theme.",
-	name: (config) => `Shows ${normalizeConfig(config).name} in the name row; Enter edits it, up to 32 characters. Herdr token: name.`,
+		? "Colors the rows: blue exploring, yellow implementing, green checking, sky for the subagent and gray for the jobs."
+		: "No colors from the panel: Herdr paints the rows with its own theme.",
+	name: (config) => `The sidebar name: ${normalizeConfig(config).name}. Enter edits it, up to 32 characters.`,
 };
 
 /**
@@ -147,7 +146,7 @@ const ACTION_ROWS: readonly ActionRow[] = [
 	{
 		id: "save",
 		label: "Save changes",
-		description: "Writes the config file and republishes every token at once.",
+		description: "Writes the config file and updates the sidebar at once.",
 	},
 	{
 		id: "sync",

@@ -955,11 +955,11 @@ test("S18: the action rows are described and a forced row names its variable in 
 		"a narrow panel wraps the description instead of cutting the variable",
 	);
 	moveToSave(panel());
-	assert.match(panel().render(80).join("\n"), /every token/u, "Save changes explains what it does");
+	assert.match(panel().render(80).join("\n"), /updates the sidebar/u, "Save changes explains what it does");
 	moveToSync(panel());
 	const sync = panel().render(80).join("\n");
 	assert.match(sync, /backup/u, "Sync Herdr rows explains the backup");
-	assert.ok(!/every token/u.test(sync), "one description at a time");
+	assert.ok(!/updates the sidebar/u.test(sync), "one description at a time");
 	panel().handleInput(KEYS.cancel);
 	await done;
 });

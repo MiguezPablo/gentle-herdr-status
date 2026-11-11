@@ -125,11 +125,10 @@ every Pi event; `Sync Herdr rows` says it writes the Herdr row with a backup and
 Herdr. A row forced by a variable says so in its description too (`Fixed by …`), and it is
 described with the value in effect, not the one stored in the file.
 
-In the panel a row talks about what you see in the sidebar, not about the metadata token
-behind it, so `token` only appears at the end of the description as `Herdr token: changes.`
-(`$subagent`, `$jobs`, `$name`), a note for whoever writes the Herdr row by hand. The
-option ids and the JSON fields (`changes`, `showSubagent`, `showJobs`) keep their names, so
-an existing `config.json` needs no change.
+In the panel a row talks about what you see in the sidebar, never about the metadata token
+behind it; the token names (`$changes`, `$subagent`, `$jobs`, `$name`) are documented below
+for whoever writes the Herdr row by hand. The option ids and the JSON fields (`changes`,
+`showSubagent`, `showJobs`) keep their names, so an existing `config.json` needs no change.
 
 The descriptions live in the config module (`src/config.ts`) next to the labels; the
 panel only renders them.
@@ -142,7 +141,7 @@ panel only renders them.
 | `Esc` | Cancel without writing. While editing the name it only leaves the edit, discarding the text. |
 
 Saving writes the JSON and applies it at once: the extension rereads the config and
-republishes every token, so the sidebar changes without waiting for the next Pi event, and
+updates the sidebar at once, so it changes without waiting for the next Pi event, and
 turning `changes` on starts the first measurement immediately. It is also the only moment
 the extension reads the file besides `session_start`; nothing polls it.
 

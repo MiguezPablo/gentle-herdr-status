@@ -236,25 +236,20 @@ test("S18: the description explains the row and what the current value shows", (
 		assert.notEqual(descriptionOf(on, id), descriptionOf(off, id), `${id} describes its on and off value`);
 	}
 	assert.ok(descriptionOf(on, "changes").includes("+N -M"), "the counter says what it shows");
-	assert.ok(descriptionOf(on, "showSubagent").includes("token: subagent"), "the subagent row names its token");
-	assert.ok(descriptionOf(on, "showJobs").includes("token: jobs"), "the jobs row names its token");
-
 	const name = descriptionOf(DEFAULT_CONFIG, "name");
-	assert.ok(name.includes("token: name"), `the name row names its token: ${name}`);
+	assert.ok(name.includes("The sidebar name: gentle."), `the name row shows the name in effect: ${name}`);
 });
 
-test("S19: the toggle rows describe what the sidebar shows and name the Herdr token last", () => {
-	const tokens = { changes: "changes", showSubagent: "subagent", showJobs: "jobs" } as const;
-	const on: HerdrStatusConfig = { ...DEFAULT_CONFIG, changes: true };
+test("S19: the toggle rows describe what the sidebar shows, without token jargon", () => {
+	const on: HerdrStatusConfig = { ...DEFAULT_CONFIG, changes: true, showSubagent: true, showJobs: true };
 	const off: HerdrStatusConfig = { ...DEFAULT_CONFIG, changes: false, showSubagent: false, showJobs: false };
 	for (const id of ["changes", "showSubagent", "showJobs"] as const) {
 		for (const text of [descriptionOf(on, id), descriptionOf(off, id)]) {
-			const note = `Herdr token: ${tokens[id]}.`;
-			assert.ok(text.endsWith(note), `${id} ends with its token, as data for a hand-written row: ${text}`);
-			const body = text.slice(0, -note.length);
-			assert.ok(!/token/iu.test(body), `${id} keeps \"token\" for the final note only: ${body}`);
+			assert.ok(!/token/iu.test(text), `${id} speaks about the sidebar, not about tokens: ${text}`);
 		}
 	}
+	assert.ok(descriptionOf(off, "showSubagent").includes("the name and the phase"), "an off row does not promise a row it may also hide");
+	assert.ok(descriptionOf({ ...DEFAULT_CONFIG, colors: true }, "colors").includes("blue exploring"), "colors names where each color goes");
 
 	// Lo que se ve en la barra, no el nombre interno del campo.
 	assert.match(descriptionOf(on, "changes"), /\+N -M/u, "the counter says what it shows");
@@ -266,7 +261,7 @@ test("S19: the toggle rows describe what the sidebar shows and name the Herdr to
 	// El nombre habla del nombre en efecto, no de un \"gentle\" fijo.
 	const name = descriptionOf({ ...DEFAULT_CONFIG, name: "side" }, "name");
 	assert.match(name, /side/u, `the name row describes the name in effect: ${name}`);
-	assert.ok(name.endsWith("Herdr token: name."), `and names its token last: ${name}`);
+	assert.ok(name.startsWith("The sidebar name: side."), `the name row reads as a label: ${name}`);
 });
 
 test("S18: the action rows say what they write", () => {
@@ -275,7 +270,7 @@ test("S18: the action rows say what they write", () => {
 	const sync = rows.find((row) => row.id === "sync");
 	assert.ok(save, "the save row is described too");
 	assert.ok(sync, "and the sync row");
-	assert.match(save.description, /every token/u, "saving republishes the tokens");
+	assert.match(save.description, /updates the sidebar/u, "saving updates the sidebar at once");
 	assert.match(sync.description, /Herdr/u, "sync writes the Herdr row");
 	assert.match(sync.description, /backup/u, "and backs the Herdr config up first");
 });
