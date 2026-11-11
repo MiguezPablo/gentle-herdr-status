@@ -120,6 +120,33 @@ test("R1: while the agent works $phase shows the current ODD phase next to pi", 
 	assert.deepEqual(timerMs(), [REFRESH_MS], "the phase has no timer of its own");
 });
 
+test("R1: each event reads the session id from its own ctx, so a resumed session still finds the phase", async () => {
+	const registry = new Map<string, unknown>([["s2", "checking"]]);
+	const { fire, last } = load(HERDR_ENV, { readPhase: (sessionId) => registry.get(sessionId) });
+	const ctx = (sessionId: string) => ({ mode: "tui", sessionManager: { getSessionId: () => sessionId } });
+	await fire("session_start", { reason: "startup" }, ctx("s1"));
+	await fire("agent_start", { type: "agent_start" }, ctx("s2"));
+	assert.equal(last()!.tokens[PHASE_TOKEN], "[checking]", "the turn start uses the id of its own event");
+	await fire("tool_result", { toolCallId: "c1", toolName: "gentle_odd_phase", details: {} }, ctx("s2"));
+	assert.equal(last()!.tokens[PHASE_TOKEN], "[checking]", "and so does a tool result");
+	await fire("tool_call", { toolCallId: "c2", toolName: "bash", input: { command: "ls" } }, ctx("s2"));
+	assert.equal(last()!.tokens[PHASE_TOKEN], "[checking]", "and so does a tool call");
+});
+
+test("R1: an event without a session id keeps the last known one", async () => {
+	let asked: string | undefined;
+	const { fire, last } = load(HERDR_ENV, {
+		readPhase: (sessionId) => {
+			asked = sessionId;
+			return "implementing";
+		},
+	});
+	await fire("session_start", { reason: "startup" }, { mode: "tui", sessionManager: { getSessionId: () => "s1" } });
+	await fire("agent_start", { type: "agent_start" }, undefined);
+	assert.equal(asked, "s1", "no ctx falls back to the last known id");
+	assert.equal(last()!.tokens[PHASE_TOKEN], "[implementing]");
+});
+
 test("R1: the phase is read on turn and tool events only, never polled", async () => {
 	let reads = 0;
 	const { fire, refresh, timerMs } = load(HERDR_ENV, {

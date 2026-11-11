@@ -68,6 +68,24 @@ export function createExtension(deps: ExtensionDeps = {}) {
 			}
 		};
 
+		/**
+		 * Pi's session id as this event's ctx sees it. gentle-pi reads it fresh on every
+		 * event too, so a resumed, forked or new session changes it after `session_start`
+		 * and the ODD phase must be looked up under the id the event actually belongs to.
+		 */
+		const ctxSessionId = (ctx: unknown): string | undefined => {
+			try {
+				return (ctx as Ctx)?.sessionManager?.getSessionId?.();
+			} catch {
+				return undefined;
+			}
+		};
+
+		/** Keep the last known id when an event's ctx carries none, so the lookup still works. */
+		const syncSessionId = (ctx: unknown): void => {
+			sessionId = ctxSessionId(ctx) ?? sessionId;
+		};
+
 		const publish = () => {
 			if (!publisher) return;
 			publisher.set(TOKEN, tracker.label());
@@ -86,11 +104,7 @@ export function createExtension(deps: ExtensionDeps = {}) {
 			if (context?.mode !== "tui") return;
 			tracker.reset();
 			working = false;
-			try {
-				sessionId = context.sessionManager?.getSessionId?.();
-			} catch {
-				sessionId = undefined;
-			}
+			sessionId = ctxSessionId(context);
 			if (!publisher) {
 				publisher = new MetadataPublisher({
 					pane: herdr.pane,
@@ -103,8 +117,9 @@ export function createExtension(deps: ExtensionDeps = {}) {
 			publish();
 		});
 
-		pi.on("agent_start", () => {
+		pi.on("agent_start", (_event, ctx) => {
 			if (!publisher) return;
+			syncSessionId(ctx);
 			working = true;
 			publish();
 		});
@@ -115,18 +130,20 @@ export function createExtension(deps: ExtensionDeps = {}) {
 			publish();
 		});
 
-		pi.on("tool_call", (event) => {
+		pi.on("tool_call", (event, ctx) => {
 			if (!publisher) return;
 			const { toolCallId, toolName, input } = event as ToolEvent;
 			if (typeof toolCallId !== "string" || typeof toolName !== "string") return;
+			syncSessionId(ctx);
 			tracker.toolCall(toolCallId, toolName, input);
 			publish();
 		});
 
-		pi.on("tool_result", (event) => {
+		pi.on("tool_result", (event, ctx) => {
 			if (!publisher) return;
 			const { toolCallId, toolName, details } = event as ToolEvent;
 			if (typeof toolCallId !== "string" || typeof toolName !== "string") return;
+			syncSessionId(ctx);
 			tracker.toolResult(toolCallId, toolName, details);
 			publish();
 		});
