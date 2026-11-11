@@ -37,6 +37,15 @@ test("a background subagent shows from its launch result until a finished status
 	assert.equal(tracker.label(), null);
 });
 
+test("a blocking subagent that returns waiting on a question keeps showing until the bus finishes it", () => {
+	const tracker = new SubagentTracker();
+	tracker.toolCall("c1", "subagent_run", { agent: "worker", task: "x" });
+	tracker.toolResult("c1", "subagent_run", details("t1", "worker", "waiting"));
+	assert.equal(tracker.label(), "worker");
+	tracker.status("t1", "completed");
+	assert.equal(tracker.label(), null);
+});
+
 test("every finished status clears the task", () => {
 	for (const finished of ["completed", "failed", "cancelled", "timed_out"]) {
 		const tracker = new SubagentTracker();
