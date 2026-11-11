@@ -1,8 +1,9 @@
 /**
- * pi-herdr-status: shows the running subagent and what the orchestrator is doing in
- * the Herdr sidebar, as the `$subagent` token (`↳ explore` or `↳ worker (3)`) and the
- * `$phase` token (a gentle-pi ODD phase in square brackets, such as `[exploring]`, else
- * `[working]`).
+ * pi-herdr-status: shows the running subagent, what the orchestrator is doing and the
+ * jobs it launched in the Herdr sidebar, as the `$name` token (`gentle`), the `$phase`
+ * token (a gentle-pi ODD phase in square brackets, such as `[exploring]`, else
+ * `[working]`), the `$subagent` token (`↳ explore` or `↳ worker (3)`) and the `$jobs`
+ * token (`⏵ CI for PR 1834` or `⏵ logs (2)`).
  *
  * Only presentation metadata (`pane.report_metadata`). Pane state
  * (working/blocked/idle) and desktop notifications stay with Herdr's official
@@ -13,7 +14,10 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 import { createDebug, type DebugWriter } from "../src/debug.ts";
 import {
+	JOBS_TOKEN,
 	MetadataPublisher,
+	NAME_TOKEN,
+	PANEL_NAME,
 	PHASE_TOKEN,
 	TOKEN,
 	herdrPane,
@@ -22,6 +26,7 @@ import {
 	type PublisherOptions,
 	type Send,
 } from "../src/herdr.ts";
+import { JOBS_SIDEBAR_EVENT, JobsTracker } from "../src/jobs.ts";
 import { phaseToken, readOddPhase, type PhaseReader } from "../src/phase.ts";
 import { SubagentTracker } from "../src/tracker.ts";
 
@@ -58,6 +63,7 @@ export function createExtension(deps: ExtensionDeps = {}) {
 		const debug = deps.debug ?? createDebug({ env });
 
 		const tracker = new SubagentTracker();
+		const jobs = new JobsTracker();
 		let publisher: MetadataPublisher | undefined;
 		let sessionId: string | undefined;
 		let working = false;
@@ -94,11 +100,15 @@ export function createExtension(deps: ExtensionDeps = {}) {
 			sessionId = seen ?? sessionId;
 		};
 
-		/** Push both tokens in one report; returns what the phase lookup saw, for the diagnostic. */
+		/** Push every token in one report; returns what the phase lookup saw, for the diagnostic. */
 		const report = (): PhaseRead => {
 			const read = phase();
+			// `$name` no depende del turno: el panel se llama `gentle` hasta el shutdown.
+			publisher?.set(NAME_TOKEN, PANEL_NAME);
 			publisher?.set(TOKEN, tracker.label());
 			publisher?.set(PHASE_TOKEN, read.token);
+			// `$jobs` tampoco depende del turno: un job sigue vivo sin turno en curso.
+			publisher?.set(JOBS_TOKEN, jobs.label());
 			return read;
 		};
 
@@ -126,17 +136,25 @@ export function createExtension(deps: ExtensionDeps = {}) {
 			report();
 		});
 
+		// Cada evento de gentle-pi reemplaza el snapshot completo de jobs de esta sesión.
+		const offJobs = pi.events.on(JOBS_SIDEBAR_EVENT, (data: unknown) => {
+			if (!publisher) return;
+			jobs.snapshot(data, sessionId);
+			report();
+		});
+
 		pi.on("session_start", (_event, ctx) => {
 			const context = ctx as Ctx;
 			if (context?.mode !== "tui") return;
 			tracker.reset();
+			jobs.reset();
 			working = false;
 			const seen = ctxSessionId(context);
 			sessionId = seen;
 			if (!publisher) {
 				publisher = new MetadataPublisher({
 					pane: herdr.pane,
-					tokens: [TOKEN, PHASE_TOKEN],
+					tokens: [NAME_TOKEN, TOKEN, PHASE_TOKEN, JOBS_TOKEN],
 					send: deps.send ?? socketSend(herdr.socket),
 					setInterval: deps.setInterval,
 					clearInterval: deps.clearInterval,
@@ -181,7 +199,9 @@ export function createExtension(deps: ExtensionDeps = {}) {
 
 		pi.on("session_shutdown", async () => {
 			if (typeof off === "function") off();
+			if (typeof offJobs === "function") offJobs();
 			tracker.reset();
+			jobs.reset();
 			working = false;
 			sessionId = undefined;
 			const current = publisher;

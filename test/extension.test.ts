@@ -6,7 +6,17 @@ import { test } from "node:test";
 
 import { createExtension } from "../extensions/pi-herdr-status.ts";
 import { DEBUG_ENV } from "../src/debug.ts";
-import { PHASE_TOKEN, REFRESH_MS, TOKEN, TTL_MS, type HerdrRequest } from "../src/herdr.ts";
+import { JOBS_SIDEBAR_EVENT } from "../src/jobs.ts";
+import {
+	JOBS_TOKEN,
+	NAME_TOKEN,
+	PANEL_NAME,
+	PHASE_TOKEN,
+	REFRESH_MS,
+	TOKEN,
+	TTL_MS,
+	type HerdrRequest,
+} from "../src/herdr.ts";
 
 type Handler = (event: unknown, ctx: unknown) => unknown;
 type PhaseReader = (sessionId: string) => unknown;
@@ -28,6 +38,15 @@ async function withRegistry<T>(value: unknown, run: () => T | Promise<T>): Promi
 
 const HERDR_ENV = { HERDR_ENV: "1", HERDR_PANE_ID: "w1:p1", HERDR_SOCKET_PATH: "/tmp/herdr.sock" };
 const TUI_CTX = { mode: "tui", sessionManager: { getSessionId: () => "s1" } };
+
+/** Todo reporte lleva los cuatro tokens; `$name` vale `gentle` mientras la sesión vive. */
+const tokensOf = (overrides: Record<string, string | null> = {}) => ({
+	[NAME_TOKEN]: PANEL_NAME,
+	[TOKEN]: null,
+	[PHASE_TOKEN]: null,
+	[JOBS_TOKEN]: null,
+	...overrides,
+});
 
 function load(env: Record<string, string | undefined> = HERDR_ENV, deps: { readPhase?: PhaseReader } = {}) {
 	const handlers = new Map<string, Handler>();
@@ -70,6 +89,8 @@ function load(env: Record<string, string | undefined> = HERDR_ENV, deps: { readP
 		emit,
 		tokens: () => sent.map((request) => request.params.tokens[TOKEN] ?? null),
 		phases: () => sent.map((request) => request.params.tokens[PHASE_TOKEN] ?? null),
+		names: () => sent.map((request) => request.params.tokens[NAME_TOKEN] ?? null),
+		jobs: () => sent.map((request) => request.params.tokens[JOBS_TOKEN] ?? null),
 		last: () => sent.at(-1)?.params,
 		refresh: () => tick(REFRESH_MS),
 		refreshTimers: () => timerCount(REFRESH_MS),
@@ -127,7 +148,7 @@ test("R1: while the agent works $phase shows the current ODD phase next to pi", 
 	await fire("session_start", { reason: "startup" });
 	await fire("agent_start", { type: "agent_start" });
 	assert.equal(askedSession, "s1", "the registry is keyed by this session");
-	assert.deepEqual(last()!.tokens, { [TOKEN]: null, [PHASE_TOKEN]: "[exploring]" }, "row reads pi [exploring]");
+	assert.deepEqual(last()!.tokens, tokensOf({ [PHASE_TOKEN]: "[exploring]" }), "row reads gentle [exploring]");
 	assert.equal(tokens().at(-1), null, "the subagent token stays untouched");
 	phase = "implementing";
 	await fire("tool_call", { toolCallId: "c1", toolName: "bash", input: { command: "ls" } });
@@ -135,7 +156,7 @@ test("R1: while the agent works $phase shows the current ODD phase next to pi", 
 	phase = "Checking…";
 	await fire("tool_result", { toolCallId: "c1", toolName: "gentle_odd_phase", details: {} });
 	assert.equal(phases().at(-1), "[checking]", "a tool result re-reads it, lowercase and without ellipsis");
-	assert.deepEqual(last()!.tokens, { [TOKEN]: null, [PHASE_TOKEN]: "[checking]" });
+	assert.deepEqual(last()!.tokens, tokensOf({ [PHASE_TOKEN]: "[checking]" }));
 	assert.deepEqual(timerMs(), [REFRESH_MS], "the phase has no timer of its own");
 });
 
@@ -187,7 +208,7 @@ test("R1: the phase is read on turn and tool events only, never polled", async (
 	assert.equal(reads, 3, "the TTL refresh republishes the value, it does not re-read the registry");
 	await fire("agent_end", { type: "agent_end", messages: [] });
 	assert.equal(reads, 3, "ending the turn only clears the token");
-	assert.deepEqual(timerMs(), [], "no timer survives the turn");
+	assert.deepEqual(timerMs(), [REFRESH_MS], "only the publisher's refresh survives, and it reads no phase");
 });
 
 test("R1: an absent, invalid or throwing phase reads as [working]", async () => {
@@ -211,30 +232,30 @@ test("R1: the phase and the subagent token are published together in one report"
 	await fire("session_start", { reason: "startup" });
 	await fire("tool_call", { toolCallId: "c1", toolName: "subagent_run", input: { agent: "explore", task: "x" } });
 	await fire("agent_start", { type: "agent_start" });
-	assert.deepEqual(sent.at(-1)!.params.tokens, { [TOKEN]: "↳ explore", [PHASE_TOKEN]: "[implementing]" });
+	assert.deepEqual(sent.at(-1)!.params.tokens, tokensOf({ [TOKEN]: "↳ explore", [PHASE_TOKEN]: "[implementing]" }));
 	const seqs = sent.map((request) => request.params.seq as number);
-	assert.deepEqual(seqs, [...seqs].sort((a, b) => a - b), "one seq stream for both tokens");
+	assert.deepEqual(seqs, [...seqs].sort((a, b) => a - b), "one seq stream for every token");
 	assert.equal(new Set(seqs).size, seqs.length);
 });
 
 test("R2: session start publishes an unset phase so a stale token disappears", async () => {
 	const { fire, last } = load(HERDR_ENV, { readPhase: () => "exploring" });
 	await fire("session_start", { reason: "startup" });
-	assert.deepEqual(last()!.tokens, { [TOKEN]: null, [PHASE_TOKEN]: null });
+	assert.deepEqual(last()!.tokens, tokensOf());
 });
 
-test("R2: the phase disappears when the turn ends and on shutdown, leaving no timer", async () => {
+test("R2: the phase disappears when the turn ends and on shutdown, with no timer of its own", async () => {
 	const { fire, last, timerMs } = load(HERDR_ENV, { readPhase: () => "implementing" });
 	await fire("session_start", { reason: "startup" });
 	await fire("agent_start", { type: "agent_start" });
 	assert.equal(last()!.tokens[PHASE_TOKEN], "[implementing]");
 	await fire("agent_end", { type: "agent_end", messages: [] });
-	assert.deepEqual(last()!.tokens, { [TOKEN]: null, [PHASE_TOKEN]: null }, "just pi");
-	assert.deepEqual(timerMs(), [], "idle stops the refresh and there is no poll to stop");
+	assert.deepEqual(last()!.tokens, tokensOf(), "just gentle, no phase");
+	assert.deepEqual(timerMs(), [REFRESH_MS], "only the publisher's refresh for $name, never a phase poll");
 	await fire("agent_start", { type: "agent_start" });
 	assert.equal(last()!.tokens[PHASE_TOKEN], "[implementing]");
 	await fire("session_shutdown", { reason: "quit" });
-	assert.deepEqual(last()!.tokens, { [TOKEN]: null, [PHASE_TOKEN]: null });
+	assert.deepEqual(last()!.tokens, tokensOf({ [NAME_TOKEN]: null }), "shutdown leaves nothing behind");
 	assert.deepEqual(timerMs(), []);
 });
 
@@ -247,12 +268,13 @@ test("R4: the phase token never stays stale: TTL, refresh while shown, clear whe
 	assert.equal(refreshTimers(), 1);
 	assert.deepEqual(timerMs(), [REFRESH_MS], "only the TTL refresh, never a phase poll");
 	await refresh();
-	assert.deepEqual(last()!.tokens, { [TOKEN]: null, [PHASE_TOKEN]: "[planning]" });
+	assert.deepEqual(last()!.tokens, tokensOf({ [PHASE_TOKEN]: "[planning]" }));
 	assert.equal(last()!.ttl_ms, TTL_MS);
 	await fire("agent_end", { type: "agent_end", messages: [] });
-	assert.equal(last()!.ttl_ms, undefined);
-	assert.equal(refreshTimers(), 0);
-	assert.deepEqual(timerMs(), []);
+	assert.equal(last()!.tokens[PHASE_TOKEN], null, "the phase is cleared and cannot stay stale");
+	assert.equal(last()!.ttl_ms, TTL_MS, "$name keeps its own TTL so it expires if Pi dies");
+	assert.equal(refreshTimers(), 1, "the refresh stays only for the name, not for the phase");
+	assert.deepEqual(timerMs(), [REFRESH_MS], "still no phase poll");
 });
 
 test("a background subagent clears when the gentle-pi bus reports it finished", async () => {
@@ -314,7 +336,7 @@ test("R5: a set PI_HERDR_STATUS_DEBUG logs one line per publishing event", async
 			await fire("tool_result", { toolCallId: "c1", toolName: "gentle_odd_phase", details: {} });
 			await fire("tool_call", { toolCallId: "c2", toolName: "bash", input: { command: "ls" } });
 			await fire("agent_end", { type: "agent_end", messages: [] });
-			assert.deepEqual(sent.at(-1)!.params.tokens, { [TOKEN]: null, [PHASE_TOKEN]: null }, "publishing is unchanged");
+			assert.deepEqual(sent.at(-1)!.params.tokens, tokensOf(), "publishing is unchanged");
 		});
 		const logged = readFileSync(file, "utf8").trim().split("\n").map((line) => JSON.parse(line) as Record<string, unknown>);
 		assert.deepEqual(logged.map((entry) => entry.event), [
@@ -350,4 +372,99 @@ test("shutdown clears the shown token and stops listening to the bus", async () 
 	await fire("session_shutdown", { reason: "quit" });
 	assert.equal(tokens().at(-1), null);
 	assert.equal(bus.size, 0);
+});
+
+/** Un job corriendo: gentle-pi lo publica sin `status`. */
+const job = (id: string, label: string, startedAt: number) => ({ id, label, startedAt });
+const jobsSnapshot = (sessionId: string, jobs: unknown[]) => ({ sessionId, snapshot: { jobs } });
+
+test("S9: $jobs shows the oldest running job in its own row, even while the agent is idle", async () => {
+	const { fire, emit, last, jobs, names, timerMs } = load();
+	await fire("session_start", { reason: "startup" });
+	assert.equal(jobs().at(-1), null, "no job, no token");
+	await emit(JOBS_SIDEBAR_EVENT, jobsSnapshot("s1", [job("j1", "CI for PR 1834", 10)]));
+	assert.equal(jobs().at(-1), "⏵ CI for PR 1834", "a job runs without a turn, so it shows while idle");
+	assert.equal(last()!.tokens[NAME_TOKEN], PANEL_NAME, "the panel name stays");
+	await emit(JOBS_SIDEBAR_EVENT, jobsSnapshot("s1", [
+		job("j2", "dev server", 30),
+		job("j1", "CI for PR 1834", 10),
+	]));
+	assert.equal(jobs().at(-1), "⏵ CI for PR 1834 (2)", "the oldest job plus the count");
+	assert.equal(last()!.ttl_ms, TTL_MS, "a shown job rides the shared TTL");
+	assert.deepEqual(timerMs(), [REFRESH_MS], "no poll of its own, only the publisher's refresh");
+});
+
+test("S9: $jobs ignores another session's event, a malformed payload and finished jobs", async () => {
+	const { fire, emit, last, jobs } = load();
+	await fire("session_start", { reason: "startup" });
+	await emit(JOBS_SIDEBAR_EVENT, jobsSnapshot("s1", [job("j1", "CI for PR 1834", 10)]));
+	const published = last();
+	await emit(JOBS_SIDEBAR_EVENT, jobsSnapshot("s2", [job("j9", "other session", 10)]));
+	assert.equal(jobs().at(-1), "⏵ CI for PR 1834", "another session never replaces this one");
+	await emit(JOBS_SIDEBAR_EVENT, jobsSnapshot("s2", []));
+	assert.equal(jobs().at(-1), "⏵ CI for PR 1834", "and never clears it either");
+	for (const payload of [undefined, "jobs", {}, { sessionId: "s1" }, { sessionId: "s1", snapshot: { jobs: 7 } }]) {
+		await emit(JOBS_SIDEBAR_EVENT, payload);
+		assert.equal(last(), published, `${JSON.stringify(payload)} publishes nothing`);
+	}
+	await emit(JOBS_SIDEBAR_EVENT, jobsSnapshot("s1", [
+		{ id: "j1", label: "CI for PR 1834", startedAt: 10, status: "exited", endedAt: 20, exitCode: 0 },
+	]));
+	assert.equal(jobs().at(-1), null, "a finished job clears the token");
+});
+
+test("S9: $jobs is cleared on session start and on shutdown", async () => {
+	const { fire, emit, last, jobs } = load();
+	await fire("session_start", { reason: "startup" });
+	await emit(JOBS_SIDEBAR_EVENT, jobsSnapshot("s1", [job("j1", "CI for PR 1834", 10)]));
+	assert.equal(jobs().at(-1), "⏵ CI for PR 1834");
+	await fire("session_start", { reason: "new" });
+	assert.equal(jobs().at(-1), null, "a new session starts without jobs");
+	await emit(JOBS_SIDEBAR_EVENT, jobsSnapshot("s1", [job("j1", "CI for PR 1834", 10)]));
+	assert.equal(jobs().at(-1), "⏵ CI for PR 1834");
+	await fire("session_shutdown", { reason: "quit" });
+	assert.deepEqual(last()!.tokens, {
+		[NAME_TOKEN]: null,
+		[TOKEN]: null,
+		[PHASE_TOKEN]: null,
+		[JOBS_TOKEN]: null,
+	}, "shutdown clears every token");
+});
+
+test("S10: $name shows gentle from session start, stays while idle and clears on shutdown", async () => {
+	const { fire, names, last, refresh } = load(HERDR_ENV, { readPhase: () => "exploring" });
+	await fire("session_start", { reason: "startup" });
+	assert.equal(names().at(-1), PANEL_NAME, "the panel is called gentle, not pi");
+	assert.equal(PANEL_NAME, "gentle", "fixed value, no colors");
+	await fire("agent_start", { type: "agent_start" });
+	assert.equal(names().at(-1), PANEL_NAME);
+	await fire("agent_end", { type: "agent_end", messages: [] });
+	assert.equal(names().at(-1), PANEL_NAME, "the name stays while the agent is idle");
+	await fire("tool_call", { toolCallId: "c1", toolName: "bash", input: { command: "ls" } });
+	await refresh();
+	assert.equal(last()!.tokens[NAME_TOKEN], PANEL_NAME, "refreshed inside its TTL so it expires if Pi dies");
+	assert.equal(last()!.ttl_ms, TTL_MS);
+	await fire("session_shutdown", { reason: "quit" });
+	assert.equal(names().at(-1), null, "shutdown leaves no name behind");
+});
+
+test("PRESERVE: $phase stays clean while idle and $subagent is untouched", async () => {
+	const { fire, emit, phases, tokens } = load(HERDR_ENV, { readPhase: () => "implementing" });
+	await fire("session_start", { reason: "startup" });
+	assert.equal(phases().at(-1), null, "idle shows no phase");
+	await fire("agent_start", { type: "agent_start" });
+	assert.equal(phases().at(-1), "[implementing]");
+	await fire("tool_call", { toolCallId: "c1", toolName: "subagent_run", input: { agent: "gentle-ai-explore", task: "x" } });
+	assert.equal(tokens().at(-1), "↳ explore", "the subagent label keeps its arrow and lost prefix");
+	await fire("agent_end", { type: "agent_end", messages: [] });
+	assert.equal(phases().at(-1), null, "back to idle, the phase is gone");
+	assert.equal(tokens().at(-1), "↳ explore", "the running subagent still shows");
+	await emit(JOBS_SIDEBAR_EVENT, jobsSnapshot("s1", [job("j1", "CI for PR 1834", 10)]));
+	assert.equal(phases().at(-1), null, "a jobs event does not resurrect the phase");
+	assert.equal(tokens().at(-1), "↳ explore", "and does not touch the subagent token");
+	await fire("tool_result", {
+		toolCallId: "c1", toolName: "subagent_run",
+		details: { gentleAgents: { taskId: "t1", agent: "explore", status: "completed" } },
+	});
+	assert.equal(tokens().at(-1), null, "the subagent clears exactly as before");
 });

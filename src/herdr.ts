@@ -6,6 +6,12 @@ export const SOURCE = "pi-herdr-status";
 export const TOKEN = "subagent";
 /** Rendered in Herdr sidebar rows as `$phase`: what the orchestrator is doing. */
 export const PHASE_TOKEN = "phase";
+/** Rendered in Herdr sidebar rows as `$name`: the panel name, `gentle` instead of `pi`. */
+export const NAME_TOKEN = "name";
+/** Rendered in Herdr sidebar rows as `$jobs`: the running gentle-pi jobs, in their own row. */
+export const JOBS_TOKEN = "jobs";
+/** Fixed `$name` value: the panel is called `gentle`, no colors, so it never depends on the theme. */
+export const PANEL_NAME = "gentle";
 /** Pane agent the token applies to (Herdr's official Pi integration reports `pi`). */
 export const AGENT = "pi";
 /** A shown token expires on its own if this process dies, so it can never stay stale. */
