@@ -45,6 +45,29 @@ test("PRESERVE: the default reader still asks gentle-pi's process-global registr
 	assert.deepEqual(asked, ["s1"]);
 });
 
+test("a class-shaped registry is read through its own instance, not as an unbound method", () => {
+	// gentle-pi's real registry is a class whose `get` reads `this.phases`.
+	class OddPhaseRegistry {
+		private readonly phases = new Map<string, { phase: string; source: string }>();
+
+		set(sessionId: string, phase: string): void {
+			this.phases.set(sessionId, { phase, source: "odd" });
+		}
+
+		get(sessionId: string): string | undefined {
+			return sessionId ? this.phases.get(sessionId)?.phase : undefined;
+		}
+	}
+
+	const registry = new OddPhaseRegistry();
+	registry.set("s1", "exploring");
+
+	withRegistry(registry, () => {
+		assert.equal(readOddPhase("s1"), "exploring", "a phase `get` needs its own instance as `this`");
+		assert.equal(readOddPhase("other"), undefined, "an untracked session has no phase");
+	});
+});
+
 test("an absent, malformed or throwing registry reads as no phase", () => {
 	withRegistry(undefined, () => assert.equal(readOddPhase("s1"), undefined));
 	withRegistry({}, () => assert.equal(readOddPhase("s1"), undefined));

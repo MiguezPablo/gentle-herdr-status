@@ -6,7 +6,8 @@
  * Evidence (gentle-pi 4.7.0, lib/odd-phase.ts): the phase of each session lives in a
  * process-global registry stored under `Symbol.for("gentle-pi.odd-phase-registry")`,
  * because Pi loads extensions with separate module caches. The registry exposes only
- * `get(sessionId)`; there is no change event, since gentle-pi's single
+ * `get(sessionId)` as a method on that instance, so it must be called bound (its body
+ * reads `this.phases`); there is no change event, since gentle-pi's single
  * `setRenderRequest` slot belongs to its prompt. Because polling the registry every
  * second only for this token was not worth it, the extension reads it on the events it
  * already handles (turn start, tool call, tool result) and never on a timer of its own.
@@ -44,7 +45,8 @@ export const readOddPhase: PhaseReader = (sessionId) => {
 		if (typeof registry !== "object" || registry === null) return undefined;
 		const get = (registry as { get?: unknown }).get;
 		if (typeof get !== "function") return undefined;
-		return (get as (id: string) => unknown)(sessionId);
+		// Called bound to the registry: gentle-pi's is a class whose `get` reads `this.phases`.
+		return (get as (id: string) => unknown).call(registry, sessionId);
 	} catch {
 		return undefined;
 	}
