@@ -4,7 +4,7 @@ Pi extension that shows, in the [Herdr](https://herdr.dev) sidebar, the running 
 what the orchestrator is doing and the jobs it launched:
 
 ```
-● pmiguez · 1
+● acme · 1
 gentle [exploring]
 ↳ explore (+1)
 ⏵ CI for PR 1834
@@ -368,7 +368,13 @@ This package only publishes presentation metadata (`pane.report_metadata`). It n
 
 ## Install
 
-From a local checkout:
+From GitHub:
+
+```bash
+pi install github:MiguezPablo/pi-herdr-status
+```
+
+Or from a local checkout:
 
 ```bash
 pi install /absolute/path/to/pi-herdr-status
