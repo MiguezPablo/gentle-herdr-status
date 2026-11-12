@@ -3,18 +3,47 @@
 Pi extension that shows, in the [Herdr](https://herdr.dev) sidebar, the running subagent,
 what the orchestrator is doing and the jobs it launched:
 
+<img src="docs/screenshots/colors.svg" alt="Herdr sidebar entry with colors on: a blue phase next to the name, a sky subagent row, a gray jobs row and a neutral changes counter" width="366">
+
+## Quick start
+
+1. Install the extension:
+
+   ```bash
+   pi install npm:gentle-herdr-status
+   ```
+
+   From GitHub instead: `pi install git:github.com/MiguezPablo/gentle-herdr-status`
+   (see [Install](#install)).
+2. Run `/herdr-status` inside Pi and choose **Sync Herdr rows**, so Herdr draws the rows
+   for Pi panes (see [Sync Herdr rows](#sync-herdr-rows)).
+
+It needs Herdr 0.9.5 or later with `herdr integration install pi`, and gentle-pi for
+subagents, jobs and phases; the exact versions are in [Requirements](#requirements).
+
+## Gallery
+
+| Plain style | Emoji style |
+| --- | --- |
+| <img src="docs/screenshots/plain.svg" alt="Herdr sidebar entry with the plain style: the state row, the name with the phase, the subagent row and the jobs row" width="230"> | <img src="docs/screenshots/emoji.svg" alt="The same entry with the emoji style: an emoji per phase, subagent and job" width="230"> |
+| The default shape, `[exploring]` and `↳ explore` ([Configuration](#configuration)) | One emoji per phase, subagent and job ([Emoji style](#emoji-style)) |
+| <img src="docs/screenshots/changes.svg" alt="Herdr sidebar entry with the uncommitted line counter next to the name: gentle [exploring] +120 -40" width="230"> | <img src="docs/screenshots/subagents-jobs.svg" alt="Herdr sidebar entry with two subagents and two jobs running: ↳ verify (+1) and ⏵ logs (+1)" width="230"> |
+| The opt-in `$changes` counter next to the name ([`PI_HERDR_STATUS_CHANGES`](#pi_herdr_status_changes)) | Two subagents and two jobs, each row with its `(+N)` counter ([How it works](#how-it-works)) |
+| <img src="docs/screenshots/idle.svg" alt="Herdr sidebar while the agent is idle: just the state row and the name" width="230"> | |
+| While the agent is idle only the name row is left ([How it works](#how-it-works)) | |
+
+Every phase, plain on the left and emoji on the right:
+
+<img src="docs/screenshots/phases.svg" alt="Every ODD phase, plain on the left and emoji on the right" width="584">
+
+The rows it publishes, as text:
+
 ```
 ● acme · 1
 gentle [exploring]
 ↳ explore (+1)
 ⏵ CI for PR 1834
 ```
-
-![Herdr sidebar entry with the plain style: the state row, the name with the phase, the subagent row and the jobs row](docs/screenshots/plain.svg)
-
-While the agent is idle only the name row is left:
-
-![Herdr sidebar while the agent is idle: just the state row and the name](docs/screenshots/idle.svg)
 
 With the opt-in `$changes` token the row can also show the uncommitted lines of the
 session's repo, next to the name:
