@@ -10,6 +10,12 @@ gentle [exploring]
 ⏵ CI for PR 1834
 ```
 
+![Herdr sidebar entry with the plain style: the state row, the name with the phase, the subagent row and the jobs row](docs/screenshots/plain.svg)
+
+While the agent is idle only the name row is left:
+
+![Herdr sidebar while the agent is idle: just the state row and the name](docs/screenshots/idle.svg)
+
 With the opt-in `$changes` token the row can also show the uncommitted lines of the
 session's repo, next to the name:
 
@@ -47,6 +53,11 @@ gentle [exploring] +120 -40
   committing, as `+<added> -<deleted>` (e.g. `+120 -40`, `+5 -0`), so it reads next to the
   name. While it is off nothing is computed, git is never run and the token stays unset.
   See [Configuration](#configuration).
+
+With two subagents and two jobs running, each row carries the oldest one plus how many
+others run alongside it:
+
+![Herdr entry with two subagents and two jobs running: ↳ verify (+1) and ⏵ logs (+1)](docs/screenshots/subagents-jobs.svg)
 
 The package is published as `gentle-herdr-status`. The config directory
 (`~/.config/pi-herdr-status/`) and the managed block markers
@@ -88,6 +99,8 @@ per section (there is no `phaseStyle`, `subagentStyle` or `jobsStyle`).
 | `$jobs` | `⏵ build (+1)` | `🔄 build (+1)` |
 
 `$name` and `$changes` never change with the style.
+
+![The same Herdr entry with the emoji style: an emoji per phase, subagent and job](docs/screenshots/emoji.svg)
 
 | Field | Values | Default | Panel row | What it does |
 | --- | --- | --- | --- | --- |
@@ -220,6 +233,8 @@ compare the reported value, first match wins.
 | `$subagent` | the `accent` role. |
 | `$jobs` | the `muted` role. |
 
+![The same entry with colors: true and the fallback palette: blue phase, sky subagent, gray jobs and a neutral counter](docs/screenshots/colors.svg)
+
 Those roles come from the Pi/Gentle Shell theme that is active when you run the sync: the
 panel reads `ctx.ui.theme.colors`, converts each role to hex and writes it, so the sidebar
 follows the same palette as the rest of Pi instead of inventing one. Every `fg` has to be a
@@ -284,6 +299,10 @@ between terminals or themes. Nothing else about the phase changes: the word is s
 lowercase, untrimmed input is still normalized, the token still clears when the agent
 goes idle.
 
+Every phase in both styles, plain on the left and emoji on the right:
+
+![Every ODD phase, plain on the left and emoji on the right](docs/screenshots/phases.svg)
+
 ### Subagent and jobs emoji style
 
 With `style: "emoji"` the `↳ ` prefix of `$subagent` becomes one emoji per agent, chosen
@@ -344,6 +363,8 @@ To show it, add the token to the row with the name:
 ```toml
 pi = [["state_icon", "machine", "workspace", "tab"], ["$name", "$phase", "$changes"], ["$subagent"], ["$jobs"]]
 ```
+
+![Herdr entry with the uncommitted line counter next to the name: gentle [exploring] +120 -40](docs/screenshots/changes.svg)
 
 ## What it does not do
 
@@ -504,6 +525,13 @@ npm install
 npm test
 npm run typecheck
 ```
+
+The images in this README are generated, not captured: `npm run screenshots` rewrites
+`docs/screenshots/` from the same functions that publish the tokens, and `npm test` fails
+when a committed SVG is stale. Emoji graphics are
+[Twemoji](https://github.com/jdecked/twemoji) by Twitter, Inc and other contributors,
+licensed [CC-BY 4.0](https://creativecommons.org/licenses/by/4.0/); the vendored files
+live in `scripts/twemoji/`.
 
 ## License
 

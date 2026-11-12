@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="244" height="108" viewBox="0 0 244 108" role="img">
+<title>The entry with colors: true and the Catppuccin Mocha fallback palette</title>
+<rect width="244" height="108" fill="#1e1e2e"/>
+<rect x="0.5" y="0.5" width="243" height="107" rx="8" fill="#181825" stroke="#313244"/>
+<g font-family="ui-monospace, &quot;JetBrains Mono&quot;, Menlo, Consolas, monospace" font-size="13" xml:space="preserve">
+<text x="14" y="27" fill="#cdd6f4">● acme · 1</text>
+<text x="14" y="47" fill="#cdd6f4">gentle</text>
+<text x="70" y="47" fill="#89b4fa">[exploring]</text>
+<text x="166" y="47" fill="#cdd6f4">+120 -40</text>
+<text x="14" y="67" fill="#89dceb">↳ explore (+1)</text>
+<text x="14" y="87" fill="#7f849c">⏵ CI for PR 1834</text>
+</g>
+</svg>

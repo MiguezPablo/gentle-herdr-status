@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="180" height="108" viewBox="0 0 180 108" role="img">
+<title>The same entry with the emoji style</title>
+<rect width="180" height="108" fill="#1e1e2e"/>
+<rect x="0.5" y="0.5" width="179" height="107" rx="8" fill="#181825" stroke="#313244"/>
+<g font-family="ui-monospace, &quot;JetBrains Mono&quot;, Menlo, Consolas, monospace" font-size="13" xml:space="preserve">
+<text x="14" y="27" fill="#cdd6f4">● acme · 1</text>
+<text x="14" y="47" fill="#cdd6f4">gentle</text>
+<svg x="70" y="34" width="15" height="15" viewBox="0 0 36 36" data-emoji="1f50d"><path fill="#9AAAB4" d="M27.388 24.642L24.56 27.47l-4.95-4.95 2.828-2.828z"/><path fill="#66757F" d="M34.683 29.11l-5.879-5.879c-.781-.781-2.047-.781-2.828 0l-2.828 2.828c-.781.781-.781 2.047 0 2.828l5.879 5.879c1.562 1.563 4.096 1.563 5.658 0 1.56-1.561 1.559-4.094-.002-5.656z"/><circle fill="#8899A6" cx="13.586" cy="13.669" r="13.5"/><circle fill="#BBDDF5" cx="13.586" cy="13.669" r="9.5"/></svg>
+<text x="94" y="47" fill="#cdd6f4">exploring</text>
+<svg x="14" y="54" width="15" height="15" viewBox="0 0 36 36" data-emoji="1f9ed"><circle fill="#F4900C" cx="18" cy="18" r="18"/><circle fill="#FFD983" cx="18" cy="18" r="14.5"/><circle fill="#F5F8FA" cx="18" cy="18" r="13"/><path fill="#CCD6DD" d="M18 8l1.531 6.304 5.54-3.375-3.375 5.54L28 18l-6.304 1.531 3.375 5.54-5.54-3.375L18 28l-1.531-6.304-5.54 3.375 3.375-5.54L8 18l6.304-1.531-3.375-5.54 5.54 3.375z"/><path fill="#292F33" d="M17.343 20.748l8.777 5.381-5.379-8.778z"/><path fill="#DD2E44" d="M18.657 15.267L9.879 9.886l5.38 8.779z"/><circle fill="#8899A6" cx="18" cy="18.008" r="3.055"/><circle fill="#F5F8FA" cx="18" cy="18.008" r="1.648"/></svg>
+<text x="38" y="67" fill="#cdd6f4">explore (+1)</text>
+<svg x="14" y="74" width="15" height="15" viewBox="0 0 36 36" data-emoji="1f504"><path fill="#3B88C3" d="M36 32c0 2.209-1.791 4-4 4H4c-2.209 0-4-1.791-4-4V4c0-2.209 1.791-4 4-4h28c2.209 0 4 1.791 4 4v28z"/><path fill="#FFF" d="M22.242 22.242l2.829 2.829c-3.905 3.905-10.237 3.904-14.143-.001-2.247-2.246-3.194-5.296-2.854-8.225l-4.037.367c-.215 3.84 1.128 7.752 4.062 10.687 5.467 5.467 14.333 5.468 19.799 0l2.828 2.828.849-9.334-9.333.849zM27.899 8.1C22.431 2.633 13.568 2.633 8.1 8.1L5.272 5.272l-.849 9.334 9.334-.849-2.829-2.829c3.906-3.905 10.236-3.905 14.142 0 2.248 2.247 3.194 5.297 2.856 8.226l4.036-.366c.216-3.841-1.128-7.753-4.063-10.688z"/></svg>
+<text x="38" y="87" fill="#cdd6f4">CI for PR 1834</text>
+</g>
+</svg>

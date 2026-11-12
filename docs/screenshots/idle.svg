@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="108" height="68" viewBox="0 0 108 68" role="img">
+<title>Herdr sidebar while the agent is idle: only the name row</title>
+<rect width="108" height="68" fill="#1e1e2e"/>
+<rect x="0.5" y="0.5" width="107" height="67" rx="8" fill="#181825" stroke="#313244"/>
+<g font-family="ui-monospace, &quot;JetBrains Mono&quot;, Menlo, Consolas, monospace" font-size="13" xml:space="preserve">
+<text x="14" y="27" fill="#cdd6f4">● acme · 1</text>
+<text x="14" y="47" fill="#cdd6f4">gentle</text>
+</g>
+</svg>
