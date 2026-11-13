@@ -14,9 +14,17 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-import { changesToken } from "../src/changes.ts";
+import { changesParts, changesToken } from "../src/changes.ts";
 import { DEFAULT_CONFIG, type HerdrStatusConfig } from "../src/config.ts";
-import { CHANGES_TOKEN, JOBS_TOKEN, NAME_TOKEN, PHASE_TOKEN, TOKEN } from "../src/herdr.ts";
+import {
+	CHANGES_ADDED_TOKEN,
+	CHANGES_DELETED_TOKEN,
+	CHANGES_TOKEN,
+	JOBS_TOKEN,
+	NAME_TOKEN,
+	PHASE_TOKEN,
+	TOKEN,
+} from "../src/herdr.ts";
 import { PALETTE, sidebarRows, type RowCell } from "../src/herdr-config.ts";
 import { JOBS_EMOJI, JobsTracker } from "../src/jobs.ts";
 import { ODD_PHASES, PHASE_EMOJIS, WORKING_EMOJI, phaseToken, type Style } from "../src/phase.ts";
@@ -129,12 +137,16 @@ function emojiMarkup(emoji: string, x: number, baseline: number): string {
 /** Los tokens de una escena, armados con las funciones reales del sidebar. */
 function sceneTokens(scene: Scene): Record<string, string | null> {
 	const style = scene.style ?? "plain";
+	const count = scene.changes === undefined
+		? null
+		: changesToken(scene.changes.added, scene.changes.deleted);
+	const parts = changesParts(count);
 	const tokens: Record<string, string | null> = {
 		[NAME_TOKEN]: DEFAULT_CONFIG.name,
 		[PHASE_TOKEN]: scene.phase === undefined ? null : phaseToken(scene.phase, style),
-		[CHANGES_TOKEN]: scene.changes === undefined
-			? null
-			: changesToken(scene.changes.added, scene.changes.deleted),
+		[CHANGES_TOKEN]: count,
+		[CHANGES_ADDED_TOKEN]: parts?.added ?? null,
+		[CHANGES_DELETED_TOKEN]: parts?.deleted ?? null,
 		[TOKEN]: null,
 		[JOBS_TOKEN]: null,
 	};
@@ -190,10 +202,14 @@ function entryLines(scene: Scene): Segment[][] {
 	const fill = (token: string, value: string): string => tokenFill(cells, token, value);
 
 	const lines: Segment[][] = [[{ text: STATE_ROW, fill: PALETTE.neutral }]];
+	// La fila del nombre sale de las celdas reales: sin colores es `$changes`, con colores son
+	// `$changes_added` y `$changes_deleted`, cada una con su color (S16).
 	const nameRow: Segment[] = [];
-	for (const token of [NAME_TOKEN, PHASE_TOKEN, CHANGES_TOKEN]) {
+	for (const nameRowCell of (sidebarRows(config)[1] ?? [])) {
+		const name = typeof nameRowCell === "string" ? nameRowCell : nameRowCell.token;
+		const token = name.slice(1);
 		const value = tokens[token];
-		if (value === null) continue;
+		if (value === null || value === undefined) continue;
 		// La separación entre celdas es una columna del layout, nunca un espacio en el texto:
 		// un renderizador recorta el espacio inicial de un `<text>`.
 		nameRow.push({ text: value, fill: fill(token, value), spaceBefore: nameRow.length > 0 });

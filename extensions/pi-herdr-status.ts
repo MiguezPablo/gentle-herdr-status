@@ -4,7 +4,9 @@
  * token (a gentle-pi ODD phase in square brackets, such as `[exploring]`, else
  * `[working]`), the `$subagent` token (`↳ explore` or `↳ worker (+2)`) and the `$jobs`
  * token (`⏵ CI for PR 1834` or `⏵ logs (+1)`) and, opt-in, the `$changes` token
- * (`+120 -40`, the uncommitted lines of the session's git repo).
+ * (`+120 -40`, the uncommitted lines of the session's git repo), plus its two halves
+ * `$changes_added` (`+120`) and `$changes_deleted` (`-40`), so the Herdr row can color
+ * each sign like Gentle Shell does.
  *
  * Everything is configurable in a JSON file (`src/config.ts`) and, from the TUI, with
  * `/herdr-status`: one `style` for the whole sidebar (`plain` or `emoji`, never per
@@ -37,7 +39,7 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 import { colorToHex, type Color } from "@earendil-works/pi-tui";
 
-import { ChangesCounter, type GitRun } from "../src/changes.ts";
+import { ChangesCounter, changesParts, type GitRun } from "../src/changes.ts";
 import {
 	ACTION_IDS,
 	actionRows,
@@ -59,6 +61,8 @@ import {
 import { createDebug, type DebugWriter } from "../src/debug.ts";
 import { syncHerdrRows, type HerdrFs, type HerdrRun, type ThemeHexes, type ThemeRole } from "../src/herdr-config.ts";
 import {
+	CHANGES_ADDED_TOKEN,
+	CHANGES_DELETED_TOKEN,
 	CHANGES_TOKEN,
 	JOBS_TOKEN,
 	MetadataPublisher,
@@ -113,11 +117,11 @@ type PanelKeys = Pick<KeybindingsManager, "matches">;
 
 /** Los roles del tema que la fila de Herdr usa como `fg` (S20). */
 const THEME_ROLES: readonly ThemeRole[] = [
-	"text",
 	"toolTitle",
 	"accent",
 	"warning",
 	"success",
+	"error",
 	"dim",
 	"muted",
 ];
@@ -424,7 +428,14 @@ export function createExtension(deps: ExtensionDeps = {}) {
 			// `$jobs` tampoco depende del turno: un job sigue vivo sin turno en curso.
 			publisher?.set(JOBS_TOKEN, settings.showJobs ? jobs.label(settings.style) : null);
 			// `$changes` se publica igual que `$jobs`; con el contador apagado siempre va limpio.
-			publisher?.set(CHANGES_TOKEN, changes?.token() ?? null);
+			const count = changes?.token() ?? null;
+			publisher?.set(CHANGES_TOKEN, count);
+			// Cada mitad en su token, para que Herdr le dé su color a cada signo (S16). Se publican
+			// siempre, no sólo con `colors` encendido: la fila de Herdr es otro archivo y puede estar
+			// desincronizada, y una celda que no se publica quedaría vacía. Se limpian con `$changes`.
+			const parts = changesParts(count);
+			publisher?.set(CHANGES_ADDED_TOKEN, parts?.added ?? null);
+			publisher?.set(CHANGES_DELETED_TOKEN, parts?.deleted ?? null);
 			return read;
 		};
 
@@ -570,7 +581,15 @@ export function createExtension(deps: ExtensionDeps = {}) {
 			if (!publisher) {
 				publisher = new MetadataPublisher({
 					pane: herdr.pane,
-					tokens: [NAME_TOKEN, TOKEN, PHASE_TOKEN, JOBS_TOKEN, CHANGES_TOKEN],
+					tokens: [
+						NAME_TOKEN,
+						TOKEN,
+						PHASE_TOKEN,
+						JOBS_TOKEN,
+						CHANGES_TOKEN,
+						CHANGES_ADDED_TOKEN,
+						CHANGES_DELETED_TOKEN,
+					],
 					send: deps.send ?? socketSend(herdr.socket),
 					setInterval: deps.setInterval,
 					clearInterval: deps.clearInterval,

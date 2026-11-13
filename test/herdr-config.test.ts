@@ -148,9 +148,33 @@ test("S16: with colors on $name stays a plain token and the other cells become s
 	assert.deepEqual(styled(rows, "$jobs"), { token: "$jobs", fg: PALETTE.overlay });
 });
 
-test("S16: the $changes cell uses a neutral fg, because a colour per sign is not possible", () => {
+test("S16: with colors on the counter is two cells, +N in the success color and -N in the error color", () => {
 	const rows = sidebarRows(withColors({ changes: true }));
-	assert.deepEqual(styled(rows, "$changes"), { token: "$changes", fg: PALETTE.neutral });
+	assert.equal(rows[1].length, 4, "$name, $phase and the two halves of the counter");
+	assert.equal(rows[1][0], "$name");
+	assert.deepEqual(styled(rows, "$changes_added"), { token: "$changes_added", fg: PALETTE.green });
+	assert.deepEqual(styled(rows, "$changes_deleted"), { token: "$changes_deleted", fg: PALETTE.red });
+	assert.equal(styled(rows, "$changes"), undefined, "the single neutral cell is gone when colors are on");
+	assert.equal(
+		styled(sidebarRows(withColors({ changes: true }), THEME_HEXES), "$changes_added")?.fg,
+		THEME_HEXES.success,
+		"the added half follows the success role of the active theme",
+	);
+	assert.equal(
+		styled(sidebarRows(withColors({ changes: true }), THEME_HEXES), "$changes_deleted")?.fg,
+		THEME_HEXES.error,
+		"and the deleted half the error role, like Gentle Shell",
+	);
+});
+
+test("S16 PRESERVE: with colors off the counter is still the single $changes cell of today", () => {
+	const rows = sidebarRows({ ...DEFAULT_CONFIG, changes: true });
+	assert.deepEqual(rows[1], ["$name", "$phase", "$changes"], "no split cells without colors");
+	assert.equal(
+		styled(rows, "$changes_added"),
+		undefined,
+		"the added half is not written in a row that never asked for colors",
+	);
 });
 
 test("S16: the phase rules cover every ODD phase, case-insensitively, with the Mocha palette", () => {
@@ -177,6 +201,7 @@ test("S16: the palette is the Catppuccin Mocha hex set the docs accept", () => {
 		mauve: "#cba6f7",
 		yellow: "#f9e2af",
 		green: "#a6e3a1",
+		red: "#f38ba8",
 		overlay: "#7f849c",
 		sky: "#89dceb",
 		neutral: "#cdd6f4",
@@ -192,11 +217,11 @@ test("S16: the colored rows render as valid Herdr inline tables with rules", () 
 
 /** Hex del tema activo, todos distintos para ver de qué rol sale cada celda (S20). */
 const THEME_HEXES: ThemeHexes = {
-	text: "#111111",
 	toolTitle: "#222222",
 	accent: "#333333",
 	warning: "#444444",
 	success: "#555555",
+	error: "#888888",
 	dim: "#666666",
 	muted: "#777777",
 };
@@ -217,7 +242,8 @@ test("S20: with theme hexes every colored cell takes the hex of its role", () =>
 		["checking", THEME_HEXES.success],
 		["closing", THEME_HEXES.dim],
 	]);
-	assert.deepEqual(styled(rows, "$changes"), { token: "$changes", fg: THEME_HEXES.text });
+	assert.deepEqual(styled(rows, "$changes_added"), { token: "$changes_added", fg: THEME_HEXES.success });
+	assert.deepEqual(styled(rows, "$changes_deleted"), { token: "$changes_deleted", fg: THEME_HEXES.error });
 	assert.deepEqual(styled(rows, "$subagent"), { token: "$subagent", fg: THEME_HEXES.accent });
 	assert.deepEqual(styled(rows, "$jobs"), { token: "$jobs", fg: THEME_HEXES.muted });
 });
@@ -235,9 +261,14 @@ test("S20: a missing role falls back per cell, and exploring falls back from too
 		PALETTE.overlay,
 	], "without toolTitle the exploring group uses accent; the rest keeps the palette");
 	assert.deepEqual(
-		styled(withAccent, "$changes"),
-		{ token: "$changes", fg: PALETTE.neutral },
-		"a missing text role falls back to the neutral hex of that cell",
+		styled(withAccent, "$changes_added"),
+		{ token: "$changes_added", fg: PALETTE.green },
+		"a missing success role falls back to the green hex of that cell",
+	);
+	assert.deepEqual(
+		styled(withAccent, "$changes_deleted"),
+		{ token: "$changes_deleted", fg: PALETTE.red },
+		"and a missing error role to the red one",
 	);
 	assert.deepEqual(styled(withAccent, "$subagent"), { token: "$subagent", fg: "#333333" });
 	assert.deepEqual(
@@ -260,18 +291,23 @@ test("S20: a missing role falls back per cell, and exploring falls back from too
 
 test("S20: a hex that is not #RRGGBB falls back to the palette of that cell", () => {
 	const rows = sidebarRows(withColors({ changes: true }), {
-		text: "#12345",
 		toolTitle: "blue",
 		accent: "#ABCDEF",
 		warning: "#12345g",
 		success: "#abcdef\u0000",
+		error: "#12345",
 		dim: "",
 		muted: " #777777",
 	});
 	assert.deepEqual(
-		styled(rows, "$changes"),
-		{ token: "$changes", fg: PALETTE.neutral },
-		"a short hex is not a color and the cell falls back",
+		styled(rows, "$changes_added"),
+		{ token: "$changes_added", fg: PALETTE.green },
+		"an invalid success role falls back to the green hex",
+	);
+	assert.deepEqual(
+		styled(rows, "$changes_deleted"),
+		{ token: "$changes_deleted", fg: PALETTE.red },
+		"an invalid error role falls back to the red hex",
 	);
 	assert.deepEqual(
 		styled(rows, "$subagent"),
@@ -331,7 +367,8 @@ test("S20: the sync writes the theme hexes it received and the palette when it g
 		});
 		assert.equal(result.status, "ok");
 		const written = readFileSync(path, "utf8");
-		assert.match(written, /fg = "#111111"/u, "the text role colors $changes");
+		assert.match(written, /token = "\$changes_added", fg = "#555555"/u, "the success role colors +N");
+		assert.match(written, /token = "\$changes_deleted", fg = "#888888"/u, "the error role colors -N");
 		assert.match(written, /fg = "#333333"/u, "the accent role colors $subagent");
 		assert.ok(!written.includes(PALETTE.sky), "no palette hex where the theme has one");
 	});
@@ -512,7 +549,8 @@ test("S16: a successful sync backs up, writes the block and reloads only after t
 		assert.ok(written.startsWith("[ui.sound]\nenabled = true\n"), "the rest of the file is untouched");
 		assert.match(written, /# BEGIN pi-herdr-status \(managed; do not edit\)/u);
 		assert.match(written, /fg = "#89dceb"/u, "the colors of the config are in the block");
-		assert.match(written, /"\$changes"/u);
+		assert.match(written, /"\$changes_added"/u);
+		assert.match(written, /"\$changes_deleted"/u);
 		assert.deepEqual(readdirSync(dir), ["config.toml", `config.toml${BACKUP_SUFFIX}`], "no temporary file left");
 	});
 });

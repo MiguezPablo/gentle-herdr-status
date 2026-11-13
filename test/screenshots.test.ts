@@ -167,6 +167,12 @@ test("no text starts or ends with whitespace, so the pixels match the plain rows
 	}
 });
 
+test("S16: the colored counter paints +N with the success hex and -N with the error hex", () => {
+	const svg = renderScreenshots()["colors.svg"];
+	assert.match(svg, /<text x="[\d.]+" y="\d+" fill="#a6e3a1">\+120<\/text>/u, "the added count is green, like Gentle Shell");
+	assert.match(svg, /<text x="[\d.]+" y="\d+" fill="#f38ba8">-40<\/text>/u, "the deleted count is red");
+});
+
 test("each SVG keeps the sidebar row layout: state row, name/phase/changes, subagent, jobs", () => {
 	const rendered = renderScreenshots();
 
@@ -187,6 +193,11 @@ test("each SVG keeps the sidebar row layout: state row, name/phase/changes, suba
 	]);
 
 	assert.equal(rows(rendered["changes.svg"])[1], "gentle [exploring] +120 -40");
+	assert.equal(
+		rows(rendered["colors.svg"])[1],
+		"gentle [exploring] +120 -40",
+		"with colors on the two cells read exactly as the single one",
+	);
 
 	assert.deepEqual(rows(rendered["emoji.svg"]), [
 		"● acme · 1",

@@ -12,6 +12,10 @@ export const NAME_TOKEN = "name";
 export const JOBS_TOKEN = "jobs";
 /** Rendered in Herdr sidebar rows as `$changes`: uncommitted lines, opt-in (S12). */
 export const CHANGES_TOKEN = "changes";
+/** Rendered in Herdr sidebar rows as `$changes_added`: just `+N`, with its own color (S16). */
+export const CHANGES_ADDED_TOKEN = "changes_added";
+/** Rendered in Herdr sidebar rows as `$changes_deleted`: just `-N`, with its own color (S16). */
+export const CHANGES_DELETED_TOKEN = "changes_deleted";
 /** Fixed `$name` value: the panel is called `gentle`, no colors, so it never depends on the theme. */
 export const PANEL_NAME = "gentle";
 /** Pane agent the token applies to (Herdr's official Pi integration reports `pi`). */

@@ -42,7 +42,16 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 
 import type { HerdrStatusConfig } from "./config.ts";
-import { CHANGES_TOKEN, JOBS_TOKEN, NAME_TOKEN, PHASE_TOKEN, TOKEN, type Env } from "./herdr.ts";
+import {
+	CHANGES_ADDED_TOKEN,
+	CHANGES_DELETED_TOKEN,
+	CHANGES_TOKEN,
+	JOBS_TOKEN,
+	NAME_TOKEN,
+	PHASE_TOKEN,
+	TOKEN,
+	type Env,
+} from "./herdr.ts";
 
 /** Ruta del config de Herdr; reemplaza a la de XDG/HOME cuando está definida. */
 export const HERDR_CONFIG_ENV = "HERDR_CONFIG_PATH";
@@ -78,13 +87,14 @@ export const PALETTE = {
 	mauve: "#cba6f7",
 	yellow: "#f9e2af",
 	green: "#a6e3a1",
+	red: "#f38ba8",
 	overlay: "#7f849c",
 	sky: "#89dceb",
 	neutral: "#cdd6f4",
 } as const;
 
 /** Roles del tema activo de Pi que este paquete usa como `fg` (S20). */
-export type ThemeRole = "text" | "toolTitle" | "accent" | "warning" | "success" | "dim" | "muted";
+export type ThemeRole = "toolTitle" | "accent" | "warning" | "success" | "error" | "dim" | "muted";
 
 /**
  * Hex ya resueltos del tema activo, por rol. Los resuelve la extensión desde `ctx.ui.theme`;
@@ -166,14 +176,16 @@ export function herdrBin(env: Env): string {
 /**
  * Una celda de la fila. Con los colores apagados (el default) es el token pelado, así que
  * la fila es exactamente la que el usuario ya tenía. Con colores: `$name` sigue siendo
- * texto (no se colorea), `$phase` lleva una rule por fase, `$changes` un `fg` neutro
- * (un color por signo no aplica a `+` y `-` a la vez), `$subagent` celeste y `$jobs` gris.
- * Los hex salen del tema activo cuando se los pasa; sin tema, de la paleta de siempre.
+ * texto (no se colorea), `$phase` lleva una rule por fase, `$changes_added` y
+ * `$changes_deleted` el verde y el rojo de Gentle Shell (S16), `$subagent` celeste y `$jobs`
+ * gris. Los hex salen del tema activo cuando se los pasa; sin tema, de la paleta de siempre.
  */
 function cell(token: string, config: HerdrStatusConfig, hexes?: ThemeHexes): RowCell {
 	if (!config.colors) return `$${token}`;
 	if (token === PHASE_TOKEN) return { token: `$${token}`, rules: phaseRules(hexes) };
-	if (token === CHANGES_TOKEN) return { token: `$${token}`, fg: themeHex(hexes, ["text"], PALETTE.neutral) };
+	// Un `fg` por celda: el `+` y el `-` van en celdas distintas para tener cada uno su color.
+	if (token === CHANGES_ADDED_TOKEN) return { token: `$${token}`, fg: themeHex(hexes, ["success"], PALETTE.green) };
+	if (token === CHANGES_DELETED_TOKEN) return { token: `$${token}`, fg: themeHex(hexes, ["error"], PALETTE.red) };
 	if (token === TOKEN) return { token: `$${token}`, fg: themeHex(hexes, ["accent"], PALETTE.sky) };
 	if (token === JOBS_TOKEN) return { token: `$${token}`, fg: themeHex(hexes, ["muted"], PALETTE.overlay) };
 	return `$${token}`;
@@ -182,10 +194,18 @@ function cell(token: string, config: HerdrStatusConfig, hexes?: ThemeHexes): Row
 /**
  * Las filas de la fila `pi`: las de por defecto más `$name`/`$phase`/`$changes` juntos y
  * `$subagent` y `$jobs` en filas propias, que desaparecen cuando su token está apagado.
+ * Con colores, el contador son dos celdas (`+N` y `-N`) para que cada signo tenga su color;
+ * sin colores es el `$changes` de siempre, así que la fila no cambia (S16).
  */
 export function sidebarRows(config: HerdrStatusConfig, hexes?: ThemeHexes): SidebarRow[] {
 	const nameRow: SidebarRow = [cell(NAME_TOKEN, config), cell(PHASE_TOKEN, config, hexes)];
-	if (config.changes) nameRow.push(cell(CHANGES_TOKEN, config, hexes));
+	if (config.changes) {
+		if (config.colors) {
+			nameRow.push(cell(CHANGES_ADDED_TOKEN, config, hexes), cell(CHANGES_DELETED_TOKEN, config, hexes));
+		} else {
+			nameRow.push(cell(CHANGES_TOKEN, config, hexes));
+		}
+	}
 	const rows: SidebarRow[] = [["state_icon", "machine", "workspace", "tab"], nameRow];
 	if (config.showSubagent) rows.push([cell(TOKEN, config, hexes)]);
 	if (config.showJobs) rows.push([cell(JOBS_TOKEN, config, hexes)]);

@@ -10,6 +10,7 @@ import {
 	ChangesCounter,
 	UNTRACKED_MAX_BYTES,
 	changesEnabled,
+	changesParts,
 	changesToken,
 	untrackedLines,
 	type CountLines,
@@ -74,6 +75,17 @@ test("S12: the token is +added -deleted with an ASCII hyphen, and null when noth
 	assert.equal(changesToken(5, 0), "+5 -0", "a zero part is still shown");
 	assert.equal(changesToken(0, 7), "+0 -7");
 	assert.equal(changesToken(0, 0), null, "no changes, no token");
+});
+
+test("S16: the token splits into the added and the deleted half, one cell each", () => {
+	assert.deepEqual(changesParts(changesToken(120, 40)), { added: "+120", deleted: "-40" });
+	assert.deepEqual(changesParts(changesToken(5, 0)), { added: "+5", deleted: "-0" }, "a zero part is still shown");
+	assert.deepEqual(changesParts(changesToken(0, 7)), { added: "+0", deleted: "-7" });
+	assert.equal(changesParts(null), null, "no changes, no halves");
+	// Cualquier otra forma no se adivina: se devuelve null y no se pinta a medias.
+	for (const other of ["", "+120", "120 -40", "+120-40", "+120 -40 ", "−120 −40"]) {
+		assert.equal(changesParts(other), null, JSON.stringify(other));
+	}
 });
 
 test("S12: sums every numstat row against HEAD and ignores binary rows", async () => {

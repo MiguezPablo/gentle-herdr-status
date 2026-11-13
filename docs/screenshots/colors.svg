@@ -6,7 +6,8 @@
 <text x="14" y="27" fill="#cdd6f4">● acme · 1</text>
 <text x="14" y="47" fill="#cdd6f4">gentle</text>
 <text x="70" y="47" fill="#89b4fa">[exploring]</text>
-<text x="166" y="47" fill="#cdd6f4">+120 -40</text>
+<text x="166" y="47" fill="#a6e3a1">+120</text>
+<text x="206" y="47" fill="#f38ba8">-40</text>
 <text x="14" y="67" fill="#89dceb">↳ explore (+1)</text>
 <text x="14" y="87" fill="#7f849c">⏵ CI for PR 1834</text>
 </g>

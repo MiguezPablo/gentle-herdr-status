@@ -3,7 +3,7 @@
 Pi extension that shows, in the [Herdr](https://herdr.dev) sidebar, the running subagent,
 what the orchestrator is doing and the jobs it launched:
 
-<img src="docs/screenshots/colors.svg" alt="Herdr sidebar entry with colors on: a blue phase next to the name, a sky subagent row, a gray jobs row and a neutral changes counter" width="366">
+<img src="docs/screenshots/colors.svg" alt="Herdr sidebar entry with colors on: a blue phase next to the name, a green +120 and a red -40 for the changes, a sky subagent row and a gray jobs row" width="366">
 
 ## Quick start
 
@@ -81,7 +81,9 @@ gentle [exploring] +120 -40
   `PI_HERDR_STATUS_CHANGES=1`) it holds the lines the session's repo has without
   committing, as `+<added> -<deleted>` (e.g. `+120 -40`, `+5 -0`), so it reads next to the
   name. While it is off nothing is computed, git is never run and the token stays unset.
-  See [Configuration](#configuration).
+  Each half is published in its own token too (`$changes_added` is `+120`, `$changes_deleted`
+  is `-40`), because the colored row gives every cell one color and the two signs need
+  different ones. See [Configuration](#configuration).
 
 With two subagents and two jobs running, each row carries the oldest one plus how many
 others run alongside it:
@@ -212,8 +214,10 @@ pi = [["state_icon", "machine", "workspace", "tab"], ["$name", "$phase"], ["$sub
 # END pi-herdr-status
 ```
 
-The rows follow the panel: `$changes` joins the name row only while the counter is on, and
-a row whose token is switched off (`$subagent`, `$jobs`) is left out.
+The rows follow the panel: with colors off `$changes` joins the name row only while the
+counter is on, and with colors on it becomes two cells (`$changes_added` and
+`$changes_deleted`) so each sign takes its own color. A row whose token is switched off
+(`$subagent`, `$jobs`) is left out.
 
 Where the file lives, resolved from the environment: `HERDR_CONFIG_PATH` when it is set,
 else `$XDG_CONFIG_HOME/herdr/config.toml`, else `~/.config/herdr/config.toml`. The binary
@@ -258,11 +262,16 @@ compare the reported value, first match wins.
 | --- | --- |
 | `$name` | none: the panel name keeps the terminal's default color. |
 | `$phase` | one rule per phase, with `contains` and `ignore_case` so both styles match: exploring/researching the `toolTitle` role of the theme, planning/deciding/authorizing `accent`, implementing `warning`, checking `success`, closing `dim`. |
-| `$changes` | the `text` role: one color cannot paint `+` green and `-` red inside the same token, so it is not attempted. |
+| `$changes_added` | the `success` role: the `+N` half in green, the same color Gentle Shell gives it. |
+| `$changes_deleted` | the `error` role: the `-N` half in red, the same color Gentle Shell gives it. |
 | `$subagent` | the `accent` role. |
 | `$jobs` | the `muted` role. |
 
-![The same entry with colors: true and the fallback palette: blue phase, sky subagent, gray jobs and a neutral counter](docs/screenshots/colors.svg)
+Herdr gives one `fg` per cell and the counter has two signs, so with colors on the row
+uses the two halves of the counter instead of the single `$changes` token. With colors
+off nothing changes: the row is still `["$name", "$phase", "$changes"]`.
+
+![The same entry with colors: true and the fallback palette: blue phase, green +120, red -40, sky subagent and gray jobs](docs/screenshots/colors.svg)
 
 Those roles come from the Pi/Gentle Shell theme that is active when you run the sync: the
 panel reads `ctx.ui.theme.colors`, converts each role to hex and writes it, so the sidebar
@@ -272,11 +281,11 @@ validate, leaves that cell on the fallback of the built-in Catppuccin Mocha pale
 `#89b4fa` for exploring/researching — and for the same group when the theme has no
 `toolTitle`, which falls back to `accent` —, mauve `#cba6f7` for
 planning/deciding/authorizing, yellow `#f9e2af` for implementing, green `#a6e3a1` for
-checking, overlay `#7f849c` for closing and `$jobs`, sky `#89dceb` for `$subagent` and
-neutral `#cdd6f4` for `$changes`). A theme that cannot be read at all leaves the whole row
-on that palette, so the sync never fails over a theme. The block is a copy, not a live
-link: **run Sync Herdr rows again if you change the theme**. Colors are off by default,
-like everything else.
+checking and `$changes_added`, overlay `#7f849c` for closing and `$jobs`, sky `#89dceb` for
+`$subagent` and red `#f38ba8` for `$changes_deleted`). A theme that cannot be read at all
+leaves the whole row on that palette, so the sync never fails over a theme. The block is a
+copy, not a live link: **run Sync Herdr rows again if you change the theme**. Colors are off
+by default, like everything else.
 
 To undo it by hand: delete the block from `# BEGIN pi-herdr-status …` through
 `# END pi-herdr-status` (or restore `<config>.pi-herdr-status.bak`) and run
@@ -376,8 +385,12 @@ entries). Untracked lines are counted in Node: only a regular file of at most 1 
 read (a symlink, a directory or anything bigger adds nothing), an empty file adds
 nothing, and a file counts its `\n` separators without the empty line behind a trailing
 newline. The token is `+<added> -<deleted>` with an ASCII hyphen and shows a zero part
-(`+5 -0`); when nothing changed it disappears. A repo without commits shows no token at
-all, because there is no `HEAD` to compare against. Outside a git repo, with git
+(`+5 -0`); when nothing changed it disappears. The two halves are published in their own
+tokens as well (`$changes_added` = `+5`, `$changes_deleted` = `-0`), always together with
+`$changes` and cleared with it: they exist so the colored row can paint `+` green and `-`
+red, but a row without colors keeps using `$changes` and reads exactly as before. A repo
+without commits shows no token at all, because there is no `HEAD` to compare against.
+Outside a git repo, with git
 missing, on error or after a 2 s timeout the token is cleared instead of keeping the
 previous value. Two differences remain on purpose: the token has no file count, and the
 worktrees of the repo are not visited, only the repo of the session cwd.
@@ -460,7 +473,10 @@ pi = [["state_icon", "machine", "workspace", "tab"], ["$name", "$phase"], ["$sub
 
 `["$name", "$phase"]` is the `gentle [exploring]` line: the panel name followed by the
 phase. With `$changes` turned on, add it to that row (`["$name", "$phase", "$changes"]`)
-to read `gentle [exploring] +120 -40`. `$subagent` and `$jobs` live in rows of their own,
+to read `gentle [exploring] +120 -40`; on a colored row use the two halves instead
+(`{ token = "$changes_added", fg = "#a6e3a1" }` and `{ token = "$changes_deleted", fg =
+"#f38ba8" }`), so the `+` is green and the `-` red, like Gentle Shell. `$subagent` and
+`$jobs` live in rows of their own,
 so each disappears (row and all) when its token is unset. Apply it with
 `herdr server reload-config`. A row whose only token is unset is hidden. If you write it by
 hand with the comment `# pi-herdr-status:`, the next **Sync Herdr rows** migrates that row

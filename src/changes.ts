@@ -1,7 +1,8 @@
 /**
  * Contador de líneas sin commitear, opt-in: con `PI_HERDR_STATUS_CHANGES=1` el sidebar
  * muestra `+<agregadas> -<borradas>` al lado del nombre del panel; sin la variable, o con
- * cualquier otro valor, el token nunca se calcula y queda limpio.
+ * cualquier otro valor, el token nunca se calcula y queda limpio. La extensión publica
+ * además cada mitad en su propio token (S16), porque Herdr colorea por celda.
  *
  * Qué cuenta, con la misma regla que el contador "Changes" de Gentle Shell:
  * - `git diff --numstat HEAD`: las filas binarias (`-\t-`) se saltan.
@@ -71,6 +72,19 @@ export function gitRun(timeoutMs = GIT_TIMEOUT_MS): GitRun {
 export function changesToken(added: number, deleted: number): string | null {
 	if (added === 0 && deleted === 0) return null;
 	return `+${added} -${deleted}`;
+}
+
+/**
+ * Las dos mitades del token, `+120` y `-40`, para que Herdr les dé un color a cada una (S16):
+ * una celda tiene un solo `fg`, así que los signos no pueden compartir celda. Sólo se acepta
+ * el formato exacto de `changesToken`; cualquier otra cosa devuelve null y no se publica a
+ * medias.
+ */
+export function changesParts(token: string | null): { added: string; deleted: string } | null {
+	if (token === null) return null;
+	const match = /^(\+\d+) (-\d+)$/u.exec(token);
+	if (match === null) return null;
+	return { added: match[1], deleted: match[2] };
 }
 
 /**

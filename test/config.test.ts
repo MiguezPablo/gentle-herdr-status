@@ -249,7 +249,10 @@ test("S19: the toggle rows describe what the sidebar shows, without token jargon
 		}
 	}
 	assert.ok(descriptionOf(off, "showSubagent").includes("the name and the phase"), "an off row does not promise a row it may also hide");
-	assert.ok(descriptionOf({ ...DEFAULT_CONFIG, colors: true }, "colors").includes("blue exploring"), "colors names where each color goes");
+	const colorsOn = descriptionOf({ ...DEFAULT_CONFIG, colors: true }, "colors");
+	assert.ok(colorsOn.includes("blue exploring"), "colors names where each color goes");
+	assert.match(colorsOn, /green \+N/u, `the added counter is green: ${colorsOn}`);
+	assert.match(colorsOn, /red -N/u, `the deleted counter is red: ${colorsOn}`);
 
 	// Lo que se ve en la barra, no el nombre interno del campo.
 	assert.match(descriptionOf(on, "changes"), /\+N -M/u, "the counter says what it shows");

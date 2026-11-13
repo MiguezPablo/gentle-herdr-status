@@ -10,6 +10,8 @@ import { DEBUG_ENV } from "../src/debug.ts";
 import { BACKUP_SUFFIX, HERDR_CONFIG_ENV, type HerdrRun } from "../src/herdr-config.ts";
 import { JOBS_SIDEBAR_EVENT } from "../src/jobs.ts";
 import {
+	CHANGES_ADDED_TOKEN,
+	CHANGES_DELETED_TOKEN,
 	CHANGES_TOKEN,
 	JOBS_TOKEN,
 	NAME_TOKEN,
@@ -53,13 +55,15 @@ function freshConfigPath(): string {
 	return join(TMP_ROOT, `config-${++configSeq}`, "config.json");
 }
 
-/** Todo reporte lleva los cinco tokens; `$name` vale `gentle` mientras la sesión vive. */
+/** Todo reporte lleva los tokens del paquete; `$name` vale `gentle` mientras la sesión vive. */
 const tokensOf = (overrides: Record<string, string | null> = {}) => ({
 	[NAME_TOKEN]: PANEL_NAME,
 	[TOKEN]: null,
 	[PHASE_TOKEN]: null,
 	[JOBS_TOKEN]: null,
 	[CHANGES_TOKEN]: null,
+	[CHANGES_ADDED_TOKEN]: null,
+	[CHANGES_DELETED_TOKEN]: null,
 	...overrides,
 });
 
@@ -123,6 +127,8 @@ function load(
 		names: () => sent.map((request) => request.params.tokens[NAME_TOKEN] ?? null),
 		jobs: () => sent.map((request) => request.params.tokens[JOBS_TOKEN] ?? null),
 		changes: () => sent.map((request) => request.params.tokens[CHANGES_TOKEN] ?? null),
+		added: () => sent.map((request) => request.params.tokens[CHANGES_ADDED_TOKEN] ?? null),
+		deleted: () => sent.map((request) => request.params.tokens[CHANGES_DELETED_TOKEN] ?? null),
 		last: () => sent.at(-1)?.params,
 		refresh: () => tick(REFRESH_MS),
 		refreshTimers: () => timerCount(REFRESH_MS),
@@ -461,6 +467,8 @@ test("S9: $jobs is cleared on session start and on shutdown", async () => {
 		[PHASE_TOKEN]: null,
 		[JOBS_TOKEN]: null,
 		[CHANGES_TOKEN]: null,
+		[CHANGES_ADDED_TOKEN]: null,
+		[CHANGES_DELETED_TOKEN]: null,
 	}, "shutdown clears every token");
 });
 
@@ -598,10 +606,50 @@ test("S12: PI_HERDR_STATUS_CHANGES=1 publishes +added -deleted in the same repor
 		"status --porcelain=v1 --untracked-files=all -z",
 	], "one measurement: HEAD, numstat against it, untracked list");
 	assert.equal(changes().at(-1), "+120 -40");
-	assert.deepEqual(last()!.tokens, tokensOf({ [CHANGES_TOKEN]: "+120 -40" }), "one report carries every token");
+	assert.deepEqual(last()!.tokens, tokensOf({
+		[CHANGES_TOKEN]: "+120 -40",
+		[CHANGES_ADDED_TOKEN]: "+120",
+		[CHANGES_DELETED_TOKEN]: "-40",
+	}), "one report carries every token");
 	assert.equal(last()!.ttl_ms, TTL_MS, "it rides the shared TTL");
 	assert.equal(names().at(-1), PANEL_NAME, "$name is untouched");
 	assert.deepEqual(timerMs(), [REFRESH_MS], "no timer of its own, only the publisher's refresh");
+});
+
+test("S16: the counter also publishes the two halves in their own tokens, for the colored cells", async () => {
+	const git = fakeChangesGit("100\t40\ta.ts\n20\t0\tb.ts\n");
+	const { fire, last, changes, added, deleted, names } = load(CHANGES_ON, { runGit: git.run });
+	await fire("session_start", { reason: "startup" });
+	assert.equal(changes().at(-1), "+120 -40", "the combined token is still published, for a row without colors");
+	assert.equal(added().at(-1), "+120", "the added half has its own token");
+	assert.equal(deleted().at(-1), "-40", "and so does the deleted one");
+	assert.deepEqual(last()!.tokens, tokensOf({
+		[CHANGES_TOKEN]: "+120 -40",
+		[CHANGES_ADDED_TOKEN]: "+120",
+		[CHANGES_DELETED_TOKEN]: "-40",
+	}), "one report carries every token");
+	assert.equal(names().at(-1), PANEL_NAME, "$name is untouched");
+});
+
+test("S16: the two halves clear together with $changes, never on their own", async () => {
+	let fail = false;
+	const git = fakeChangesGit("3\t1\ta.ts\n");
+	const run: GitRun = async (args, cwd) => {
+		if (fail && args[0] === "diff") throw new Error("fatal: not a git repository");
+		return git.run(args, cwd);
+	};
+	const { fire, last, changes, added, deleted } = load(CHANGES_ON, { runGit: run });
+	await fire("session_start", { reason: "startup" });
+	assert.deepEqual([changes().at(-1), added().at(-1), deleted().at(-1)], ["+3 -1", "+3", "-1"]);
+	fail = true;
+	await fire("agent_start", { type: "agent_start" });
+	assert.deepEqual(
+		[changes().at(-1), added().at(-1), deleted().at(-1)],
+		[null, null, null],
+		"a git error never leaves a half behind",
+	);
+	await fire("session_shutdown", { reason: "quit" });
+	assert.deepEqual(last()!.tokens, tokensOf({ [NAME_TOKEN]: null }), "shutdown clears the halves too");
 });
 
 test("S12: each trigger re-measures, and a tool call does not", async () => {
@@ -702,6 +750,8 @@ test("PRESERVE: with $changes on, $phase, $subagent, $jobs and $name keep their 
 	await emit(JOBS_SIDEBAR_EVENT, jobsSnapshot("s1", [job("j1", "CI for PR 1834", 10)]));
 	assert.deepEqual(last()!.tokens, tokensOf({
 		[CHANGES_TOKEN]: "+5 -0",
+		[CHANGES_ADDED_TOKEN]: "+5",
+		[CHANGES_DELETED_TOKEN]: "-0",
 		[TOKEN]: "↳ explore",
 		[PHASE_TOKEN]: "[implementing]",
 		[JOBS_TOKEN]: "⏵ CI for PR 1834",
@@ -787,6 +837,8 @@ test("PRESERVE: with no config file and no variables every token reads exactly a
 		[PHASE_TOKEN]: "[implementing]",
 		[JOBS_TOKEN]: "⏵ CI for PR 1834",
 		[CHANGES_TOKEN]: null,
+		[CHANGES_ADDED_TOKEN]: null,
+		[CHANGES_DELETED_TOKEN]: null,
 	});
 });
 
@@ -1019,7 +1071,7 @@ test("S15: an option forced by a variable is marked and cannot be changed from t
 });
 
 test("S15: saving turns the changes counter on and off live", async () => {
-	const { commands, fire, changes, flush, configPath } = load(HERDR_ENV, { runGit: fakeChangesGit("6\t2\ta.ts\n").run });
+	const { commands, fire, changes, added, deleted, flush, configPath } = load(HERDR_ENV, { runGit: fakeChangesGit("6\t2\ta.ts\n").run });
 	await fire("session_start", { reason: "startup" });
 	assert.equal(changes().at(-1), null, "off by default");
 	const first = openPanel(commands);
@@ -1030,6 +1082,7 @@ test("S15: saving turns the changes counter on and off live", async () => {
 	await flush();
 	assert.equal(JSON.parse(readFileSync(configPath, "utf8")).changes, true);
 	assert.equal(changes().at(-1), "+6 -2", "the counter measures as soon as it is turned on");
+	assert.deepEqual([added().at(-1), deleted().at(-1)], ["+6", "-2"], "both halves are published too");
 	const second = openPanel(commands);
 	moveTo(second.panel(), "changes");
 	second.panel().handleInput(KEYS.confirm);
@@ -1037,6 +1090,7 @@ test("S15: saving turns the changes counter on and off live", async () => {
 	await second.done;
 	await flush();
 	assert.equal(changes().at(-1), null, "turning it off clears the token");
+	assert.deepEqual([added().at(-1), deleted().at(-1)], [null, null], "and both halves with it");
 });
 
 test("S15: saving a switched-off token clears it at once, without waiting for an event", async () => {
@@ -1083,6 +1137,23 @@ test("S20: Sync Herdr rows takes the fg colors from the active Pi theme", async 
 	assert.match(written, /token = "\$subagent", fg = "#333333"/u, "$subagent uses accent");
 	assert.match(written, /token = "\$jobs", fg = "#777777"/u, "$jobs uses muted");
 	assert.ok(!written.includes("#89dceb"), "no palette hex where the theme has one");
+});
+
+test("S16: Sync Herdr rows colors +N with the success role and -N with the error role", async () => {
+	const herdrPath = freshHerdrPath("theme-changes", "[ui.sound]\nenabled = true\n");
+	const configPath = freshConfigPath();
+	saveConfig(configPath, { ...DEFAULT_CONFIG, changes: true, colors: true });
+	const herdr = fakeHerdrRun();
+	const { commands, fire } = load({ ...HERDR_ENV, [HERDR_CONFIG_ENV]: herdrPath }, { configPath, herdrRun: herdr.run });
+	await fire("session_start", { reason: "startup" });
+	const { panel, done } = openPanel(commands, fakeTheme());
+	moveToSync(panel());
+	panel().handleInput(KEYS.confirm);
+	await done;
+	const written = readFileSync(herdrPath, "utf8");
+	assert.match(written, /token = "\$changes_added", fg = "#555555"/u, "the added count takes the success role");
+	assert.match(written, /token = "\$changes_deleted", fg = "#888888"/u, "the deleted count takes the error role");
+	assert.ok(!written.includes('token = "$changes"'), "the neutral single cell is not written when colors are on");
 });
 
 test("S20: a theme without colors or a throwing theme falls back to the palette and never breaks the sync", async () => {
@@ -1144,11 +1215,11 @@ const rgbHex = (hex: string) => ({
 
 /** Hex del tema activo, todos distintos para ver de qué rol sale cada celda (S20). */
 const THEME_HEXES: Record<string, string> = {
-	text: "#111111",
 	toolTitle: "#222222",
 	accent: "#333333",
 	warning: "#444444",
 	success: "#555555",
+	error: "#888888",
 	dim: "#666666",
 	muted: "#777777",
 };

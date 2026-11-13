@@ -116,7 +116,7 @@ const OPTION_DESCRIPTIONS: Record<OptionId, (config: HerdrStatusConfig) => strin
 		? "Shows the running jobs in their own row as ⏵ build (+1), or 🔄 build with the emoji style."
 		: "No jobs row: a running job never reaches the sidebar.",
 	colors: (config) => config.colors
-		? "Colors the rows: blue exploring, yellow implementing, green checking, sky for the subagent and gray for the jobs."
+		? "Colors the rows: blue exploring, yellow implementing, green checking, sky for the subagent, gray for the jobs and green +N / red -N for the changes, like Gentle Shell."
 		: "No colors from the panel: Herdr paints the rows with its own theme.",
 	name: (config) => `The sidebar name: ${normalizeConfig(config).name}. Enter edits it, up to 32 characters.`,
 };
