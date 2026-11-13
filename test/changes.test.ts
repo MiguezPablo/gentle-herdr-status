@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -8,16 +8,17 @@ import { test } from "node:test";
 import {
 	CHANGES_ENV,
 	ChangesCounter,
-	EMPTY_TREE,
+	UNTRACKED_MAX_BYTES,
 	changesEnabled,
 	changesToken,
+	untrackedLines,
+	type CountLines,
 	type GitRun,
-	type ReadFile,
 } from "../src/changes.ts";
 
 const HEAD = "rev-parse --verify --quiet HEAD";
 const DIFF = (base: string) => `diff --numstat ${base}`;
-const UNTRACKED = "ls-files --others --exclude-standard";
+const STATUS = "status --porcelain=v1 --untracked-files=all -z";
 
 /** git falso: cada comando esperado devuelve su salida; cualquier otro es un error del test. */
 function fakeGit(outputs: Record<string, string | Error>) {
@@ -33,32 +34,32 @@ function fakeGit(outputs: Record<string, string | Error>) {
 	return { run, calls };
 }
 
-/** Un repo con HEAD, sin untracked: sólo importa el numstat que pida el test. */
+/** Un repo con HEAD, sin untracked: sólo importa el numstat y el status que pida el test. */
 function repo(numstat: string, outputs: Record<string, string | Error> = {}) {
 	return fakeGit({
 		[HEAD]: "abc123\n",
 		[DIFF("abc123")]: numstat,
-		[UNTRACKED]: "",
+		[STATUS]: "",
 		...outputs,
 	});
 }
 
-/** Lee cada untracked del mapa; un archivo que no está es un error del test. */
-function fakeRead(files: Record<string, Buffer | string>) {
-	const read: ReadFile = async (path) => {
-		const content = files[path];
-		if (content === undefined) throw new Error(`unexpected read: ${path}`);
-		return typeof content === "string" ? Buffer.from(content) : content;
+/** Cuenta líneas por su ruta; un archivo que no está en el mapa es un error del test. */
+function fakeCountLines(files: Record<string, number>) {
+	const seen: string[] = [];
+	const countLines: CountLines = async (path) => {
+		seen.push(path);
+		const lines = files[path];
+		if (lines === undefined) throw new Error(`unexpected count: ${path}`);
+		return lines;
 	};
-	return read;
+	return { countLines, seen };
 }
 
 /** Corre un refresco y espera el valor publicado; el guard de timeout no debe quedar colgado. */
 async function measure(counter: ChangesCounter, cwd = "/repo"): Promise<string | null> {
-	let done: (token: string | null) => void = () => {};
-	const seen = new Promise<string | null>((resolve) => { done = resolve; });
 	counter.refresh(cwd);
-	return Promise.race([seen, new Promise<string | null>((resolve) => setTimeout(() => resolve(counter.token()), 200))]);
+	return Promise.race([new Promise<string | null>((resolve) => setTimeout(() => resolve(counter.token()), 200))]);
 }
 
 test("S12: only the exact value 1 turns the token on", () => {
@@ -80,29 +81,31 @@ test("S12: sums every numstat row against HEAD and ignores binary rows", async (
 	const tokens: (string | null)[] = [];
 	const counter = new ChangesCounter({ cwd: "/repo", run: git.run, onChange: (token) => tokens.push(token) });
 	assert.equal(await measure(counter), "+120 -40");
-	assert.deepEqual(git.calls, [HEAD, DIFF("abc123"), UNTRACKED], "one diff against HEAD, no shell");
+	assert.deepEqual(git.calls, [HEAD, DIFF("abc123"), STATUS], "one diff against HEAD, then the file list");
 	assert.deepEqual(tokens, ["+120 -40"]);
 });
 
-test("S12: an untracked text file adds its lines and a binary one is skipped", async () => {
-	const git = repo("", { [UNTRACKED]: "notes.md\nlogo.png\n" });
-	const read = fakeRead({
-		"/repo/notes.md": "uno\ndos\ntres\n",
-		"/repo/logo.png": Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x00, 0x01]),
+test("S12: only untracked (`??`) entries of the porcelain list add their lines", async () => {
+	const git = repo("", {
+		// `-z` separa por NUL: `M  staged.ts`, `R  nuevo.ts` + su ruta vieja, y los untracked.
+		[STATUS]: "M  staged.ts\0R  nuevo.ts\0viejo.ts\0?? notas.md\0?? src/dos.ts\0",
 	});
-	const counter = new ChangesCounter({ cwd: "/repo", run: git.run, readFile: read, onChange: () => {} });
-	assert.equal(await measure(counter), "+3 -0", "three lines of text, the binary contributes nothing");
+	const count = fakeCountLines({ "/repo/notas.md": 3, "/repo/src/dos.ts": 2 });
+	const counter = new ChangesCounter({
+		cwd: "/repo",
+		run: git.run,
+		countLines: count.countLines,
+		onChange: () => {},
+	});
+	assert.equal(await measure(counter), "+5 -0", "three plus two untracked lines, nothing from tracked entries");
+	assert.deepEqual(count.seen, ["/repo/notas.md", "/repo/src/dos.ts"], "each untracked is read from the cwd");
 });
 
-test("S12: a repo without commits compares against git's empty tree", async () => {
-	const git = fakeGit({
-		[HEAD]: new Error("fatal: Needed a single revision"),
-		[DIFF(EMPTY_TREE)]: "12\t3\tREADME.md\n",
-		[UNTRACKED]: "",
-	});
+test("S12: a repo without commits shows no token at all", async () => {
+	const git = fakeGit({ [HEAD]: new Error("fatal: Needed a single revision") });
 	const counter = new ChangesCounter({ cwd: "/repo", run: git.run, onChange: () => {} });
-	assert.equal(await measure(counter), "+12 -3");
-	assert.deepEqual(git.calls, [HEAD, DIFF(EMPTY_TREE), UNTRACKED]);
+	assert.equal(await measure(counter), null, "no HEAD, no changes line");
+	assert.deepEqual(git.calls, [HEAD], "nothing else is measured without commits");
 });
 
 test("S12: a failing or hanging git reads as null, never the previous value", async () => {
@@ -139,7 +142,7 @@ test("S12: at most one measurement in flight, plus exactly one queued re-measure
 			}
 			return "7\t2\ta.ts\n";
 		}
-		if (key === UNTRACKED) return "";
+		if (key === STATUS) return "";
 		throw new Error(`unexpected git call: ${key}`);
 	};
 	const tokens: (string | null)[] = [];
@@ -177,6 +180,47 @@ test("S12: a disposed counter publishes nothing more", async () => {
 	assert.equal(counter.token(), null);
 });
 
+// --- Contador de untracked: misma regla que Gentle Shell (stat, tope 1 MiB, split por \n).
+
+test("S12/PRESERVE: line counting is exactly Gentle Shell's split rule", async () => {
+	const dir = mkdtempSync(join(tmpdir(), "pi-herdr-status-lines-"));
+	try {
+		const file = (name: string, content: string | Buffer) => {
+			const path = join(dir, name);
+			writeFileSync(path, content);
+			return path;
+		};
+		assert.equal(await untrackedLines(file("trailing.txt", "uno\ndos\ntres\n")), 3);
+		assert.equal(await untrackedLines(file("no-trailing.txt", "uno\ndos")), 2);
+		assert.equal(await untrackedLines(file("empty.txt", "")), 0, "an empty file adds nothing");
+		assert.equal(await untrackedLines(file("only-newline.txt", "\n")), 1);
+		assert.equal(await untrackedLines(file("one.txt", "uno")), 1);
+		assert.equal(await untrackedLines(join(dir, "missing.txt")), 0, "a vanished file adds nothing");
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
+});
+
+test("S12: a symlink, a directory and a file over 1 MiB add no lines", async () => {
+	const dir = mkdtempSync(join(tmpdir(), "pi-herdr-status-lines-"));
+	try {
+		writeFileSync(join(dir, "target.txt"), "a\nb\nc\n");
+		symlinkSync(join(dir, "target.txt"), join(dir, "link.txt"));
+		symlinkSync(join(dir, "nowhere.txt"), join(dir, "broken.txt"));
+		const big = join(dir, "big.txt");
+		writeFileSync(big, Buffer.alloc(UNTRACKED_MAX_BYTES + 1, 0x61));
+		const exact = join(dir, "exact.txt");
+		writeFileSync(exact, "a\n".repeat(UNTRACKED_MAX_BYTES / 2));
+		assert.equal(await untrackedLines(join(dir, "link.txt")), 0, "a symlink is not a regular file");
+		assert.equal(await untrackedLines(join(dir, "broken.txt")), 0, "a broken symlink neither");
+		assert.equal(await untrackedLines(dir), 0, "a directory is not a regular file");
+		assert.equal(await untrackedLines(big), 0, "one byte over the cap adds nothing");
+		assert.equal(await untrackedLines(exact), UNTRACKED_MAX_BYTES / 2, "exactly at the cap is still counted");
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
+});
+
 /** git disponible en la máquina: sin él el test de integración se salta. */
 function hasGit(): boolean {
 	try {
@@ -202,15 +246,17 @@ test("S12: integration: a real temp repo counts staged, unstaged and untracked l
 		git("-c", "user.name=test", "-c", "user.email=test@example.com", "commit", "-q", "-m", "init");
 		writeFileSync(join(dir, "tracked.txt"), "uno\ndos\ntres\ncuatro\ncinco\n");
 		writeFileSync(join(dir, "new.txt"), "a\nb\n");
+		writeFileSync(join(dir, "big.txt"), Buffer.alloc(UNTRACKED_MAX_BYTES + 1, 0x61));
+		symlinkSync(join(dir, "new.txt"), join(dir, "link.txt"));
 		const counter = new ChangesCounter({ cwd: dir, onChange: () => {} });
-		assert.equal(await measure(counter, dir), "+4 -0", "two added lines plus two untracked lines");
+		assert.equal(await measure(counter, dir), "+4 -0", "two added lines plus two untracked; big and symlink add none");
 
-		// Repo sin commits: el staged se mide contra el árbol vacío.
+		// Repo sin commits: no hay HEAD, así que no hay token.
 		execFileSync("git", ["init", "-q", "-b", "main"], { cwd: clean, stdio: "ignore" });
 		writeFileSync(join(clean, "first.txt"), "x\ny\nz\n");
 		execFileSync("git", ["add", "first.txt"], { cwd: clean, stdio: "ignore" });
 		const empty = new ChangesCounter({ cwd: clean, onChange: () => {} });
-		assert.equal(await measure(empty, clean), "+3 -0", "no HEAD yet, compared against the empty tree");
+		assert.equal(await measure(empty, clean), null, "no commits, no changes line");
 	} finally {
 		rmSync(dir, { recursive: true, force: true });
 		rmSync(clean, { recursive: true, force: true });

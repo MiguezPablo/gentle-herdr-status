@@ -3,11 +3,13 @@
  * muestra `+<agregadas> -<borradas>` al lado del nombre del panel; sin la variable, o con
  * cualquier otro valor, el token nunca se calcula y queda limpio.
  *
- * Qué cuenta (siempre contra `HEAD`, o sea staged + unstaged):
+ * Qué cuenta, con la misma regla que el contador "Changes" de Gentle Shell:
  * - `git diff --numstat HEAD`: las filas binarias (`-\t-`) se saltan.
- * - `git ls-files --others --exclude-standard`: los untracked no ignorados suman sus
- *   líneas; un archivo con un byte NUL se trata como binario y no suma nada.
- * - Un repo sin commits compara contra el árbol vacío de git.
+ * - `git status --porcelain=v1 --untracked-files=all -z`: los untracked no ignorados
+ *   (`??`) suman sus líneas, contadas en Node (`lstat` + lectura utf8): un symlink, un
+ *   directorio, un archivo de más de 1 MiB o un archivo vacío suman 0; el resto suma
+ *   `split("\n")`, sin la línea final vacía cuando el archivo termina en salto de línea.
+ * - Un repo sin commits (`HEAD` nonato) no muestra token: no hay contra qué comparar.
  *
  * Cuándo se recalcula: sólo cuando la extensión recibe un evento de Pi
  * (`session_start`, `agent_start`, cada `tool_result`, el evento de jobs y `agent_end`),
@@ -17,7 +19,7 @@
  * repo git dan `null`, nunca el valor anterior: el token no puede quedar viejo (S4).
  */
 import { execFile } from "node:child_process";
-import { readFile } from "node:fs/promises";
+import { lstat, readFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import type { Env } from "./herdr.ts";
@@ -26,19 +28,19 @@ import type { Env } from "./herdr.ts";
 export const CHANGES_ENV = "PI_HERDR_STATUS_CHANGES";
 /** El único valor que enciende el contador. */
 export const CHANGES_ON = "1";
-/** Hash del árbol vacío de git: base para comparar cuando el repo todavía no tiene commits. */
-export const EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
 /** Tope de cada comando de git; pasado ese tiempo el token queda limpio. */
 export const GIT_TIMEOUT_MS = 2_000;
+/** Tope de tamaño de un untracked: 1 MiB, igual que Gentle Shell. */
+export const UNTRACKED_MAX_BYTES = 1024 * 1024;
 
 /** Ejecuta git sin shell y devuelve su stdout; rechaza en error o timeout. */
 export type GitRun = (args: readonly string[], cwd: string) => Promise<string>;
-/** Lectura de un archivo del repo; inyectable para los tests. */
-export type ReadFile = (path: string) => Promise<Buffer>;
+/** Líneas de un untracked; inyectable para los tests. */
+export type CountLines = (path: string) => Promise<number>;
 export type ChangesOptions = {
 	cwd: string;
 	run?: GitRun;
-	readFile?: ReadFile;
+	countLines?: CountLines;
 	timeoutMs?: number;
 	/** Se llama con el valor nuevo cada vez que termina una medición (nunca tras `dispose`). */
 	onChange: (token: string | null) => void;
@@ -71,13 +73,17 @@ export function changesToken(added: number, deleted: number): string | null {
 	return `+${added} -${deleted}`;
 }
 
-/** Líneas de un archivo de texto; `undefined` cuando es binario (tiene un byte NUL). */
-function countLines(content: Buffer): number | undefined {
-	if (content.includes(0)) return undefined;
-	if (content.length === 0) return 0;
-	const lines = content.toString("utf8").split("\n");
-	if (lines.at(-1) === "") lines.pop();
-	return lines.length;
+/**
+ * Líneas de un archivo untracked, con la regla de Gentle Shell: sólo un archivo regular de
+ * hasta 1 MiB cuenta (un symlink, un directorio o algo más grande suma 0), un archivo
+ * vacío suma 0 y el resto suma sus `\n`, sin contar el vacío detrás del último.
+ */
+export async function untrackedLines(path: string): Promise<number> {
+	const stats = await lstat(path).catch(() => undefined);
+	if (stats === undefined || !stats.isFile() || stats.size > UNTRACKED_MAX_BYTES) return 0;
+	const text = await readFile(path, "utf8");
+	if (text.length === 0) return 0;
+	return text.split("\n").length - (text.endsWith("\n") ? 1 : 0);
 }
 
 /**
@@ -86,7 +92,7 @@ function countLines(content: Buffer): number | undefined {
  */
 export class ChangesCounter {
 	private readonly run: GitRun;
-	private readonly read: ReadFile;
+	private readonly countLines: CountLines;
 	private readonly timeoutMs: number;
 	private readonly onChange: (token: string | null) => void;
 	private cwd: string;
@@ -98,7 +104,7 @@ export class ChangesCounter {
 	constructor(options: ChangesOptions) {
 		this.cwd = options.cwd;
 		this.run = options.run ?? gitRun(options.timeoutMs ?? GIT_TIMEOUT_MS);
-		this.read = options.readFile ?? ((path) => readFile(path));
+		this.countLines = options.countLines ?? untrackedLines;
 		this.timeoutMs = options.timeoutMs ?? GIT_TIMEOUT_MS;
 		this.onChange = options.onChange;
 	}
@@ -165,10 +171,12 @@ export class ChangesCounter {
 	}
 
 	private async count(): Promise<string | null> {
-		const base = await this.base();
+		const head = await this.head();
+		// Sin commits no hay contra qué comparar: Gentle Shell no muestra cambios ahí.
+		if (head === null) return null;
 		let added = 0;
 		let deleted = 0;
-		for (const row of (await this.run(["diff", "--numstat", base], this.cwd)).split("\n")) {
+		for (const row of (await this.run(["diff", "--numstat", head], this.cwd)).split("\n")) {
 			const [plus, minus] = row.split("\t");
 			const up = Number.parseInt(plus ?? "", 10);
 			const down = Number.parseInt(minus ?? "", 10);
@@ -177,22 +185,22 @@ export class ChangesCounter {
 			added += up;
 			deleted += down;
 		}
-		for (const file of (await this.run(["ls-files", "--others", "--exclude-standard"], this.cwd)).split("\n")) {
-			const path = file.trim();
-			if (path.length === 0) continue;
-			const lines = countLines(await this.read(join(this.cwd, path)));
-			if (lines !== undefined) added += lines;
+		// `-z` separa por NUL y no escapa rutas: cada untracked (`??`) suma sus líneas.
+		const status = await this.run(["status", "--porcelain=v1", "--untracked-files=all", "-z"], this.cwd);
+		for (const record of status.split("\0")) {
+			if (!record.startsWith("?? ")) continue;
+			added += await this.countLines(join(this.cwd, record.slice(3)));
 		}
 		return changesToken(added, deleted);
 	}
 
-	/** HEAD del repo; sin commits se compara contra el árbol vacío. */
-	private async base(): Promise<string> {
+	/** `HEAD` del repo; `null` cuando el repo todavía no tiene commits. */
+	private async head(): Promise<string | null> {
 		try {
 			const head = (await this.run(["rev-parse", "--verify", "--quiet", "HEAD"], this.cwd)).trim();
-			return head.length > 0 ? head : EMPTY_TREE;
+			return head.length > 0 ? head : null;
 		} catch {
-			return EMPTY_TREE;
+			return null;
 		}
 	}
 }

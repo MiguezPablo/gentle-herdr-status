@@ -553,7 +553,7 @@ test("PRESERVE: $phase stays clean while idle and $subagent is untouched", async
 	assert.equal(tokens().at(-1), null, "the subagent clears exactly as before");
 });
 
-/** git falso de `$changes`: HEAD fijo, el numstat y los untracked que pida el test. */
+/** git falso de `$changes`: HEAD fijo, el numstat y la lista `-z` de untracked que pida el test. */
 function fakeChangesGit(numstat = "", untracked = "") {
 	const calls: string[] = [];
 	const run: GitRun = async (args) => {
@@ -561,7 +561,7 @@ function fakeChangesGit(numstat = "", untracked = "") {
 		calls.push(key);
 		if (key === "rev-parse --verify --quiet HEAD") return "abc123\n";
 		if (key.startsWith("diff --numstat")) return numstat;
-		if (key === "ls-files --others --exclude-standard") return untracked;
+		if (key === "status --porcelain=v1 --untracked-files=all -z") return untracked;
 		throw new Error(`unexpected git call: ${key}`);
 	};
 	return { run, calls };
@@ -595,7 +595,7 @@ test("S12: PI_HERDR_STATUS_CHANGES=1 publishes +added -deleted in the same repor
 	assert.deepEqual(git.calls, [
 		"rev-parse --verify --quiet HEAD",
 		"diff --numstat abc123",
-		"ls-files --others --exclude-standard",
+		"status --porcelain=v1 --untracked-files=all -z",
 	], "one measurement: HEAD, numstat against it, untracked list");
 	assert.equal(changes().at(-1), "+120 -40");
 	assert.deepEqual(last()!.tokens, tokensOf({ [CHANGES_TOKEN]: "+120 -40" }), "one report carries every token");
@@ -636,7 +636,7 @@ test("S12: events during a measurement collapse into exactly one more", async ()
 			}
 			return "7\t2\ta.ts\n";
 		}
-		if (key === "ls-files --others --exclude-standard") return "";
+		if (key === "status --porcelain=v1 --untracked-files=all -z") return "";
 		throw new Error(`unexpected git call: ${key}`);
 	};
 	const { fire, emit, changes } = load(CHANGES_ON, { runGit: run });

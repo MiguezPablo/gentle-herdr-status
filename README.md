@@ -368,13 +368,19 @@ noise unless you ask for it.
 PI_HERDR_STATUS_CHANGES=1 pi
 ```
 
-What it counts, always against `HEAD` (`git diff --numstat HEAD`, so staged and unstaged
-changes together) plus the lines of the untracked files that git does not ignore
-(`git ls-files --others --exclude-standard`). Binary files are skipped. The token is
-`+<added> -<deleted>` with an ASCII hyphen and shows a zero part (`+5 -0`); when nothing
-changed it disappears. A repo without commits is compared against git's empty tree, and
-outside a git repo, with git missing, on error or after a 2 s timeout the token is
-cleared instead of keeping the previous value.
+What it counts is deliberately the same rule as Gentle Shell's own "Changes" counter:
+tracked lines against `HEAD` (`git diff --numstat HEAD`, so staged and unstaged changes
+together, binary rows counting as zero) plus the lines of the untracked files that git
+does not ignore (`git status --porcelain=v1 --untracked-files=all -z`, and only the `??`
+entries). Untracked lines are counted in Node: only a regular file of at most 1 MiB is
+read (a symlink, a directory or anything bigger adds nothing), an empty file adds
+nothing, and a file counts its `\n` separators without the empty line behind a trailing
+newline. The token is `+<added> -<deleted>` with an ASCII hyphen and shows a zero part
+(`+5 -0`); when nothing changed it disappears. A repo without commits shows no token at
+all, because there is no `HEAD` to compare against. Outside a git repo, with git
+missing, on error or after a 2 s timeout the token is cleared instead of keeping the
+previous value. Two differences remain on purpose: the token has no file count, and the
+worktrees of the repo are not visited, only the repo of the session cwd.
 
 When it recalculates, with no timer of its own: on `session_start`, `agent_start`, every
 `tool_result` (any tool, so edit/write/bash and the end of a subagent are covered), the
