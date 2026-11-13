@@ -1,6 +1,6 @@
 {
 	"name": "gentle-herdr-status",
-	"version": "0.3.0",
+	"version": "0.4.0",
 	"description": "Pi extension that shows in the Herdr sidebar the running subagent ($subagent), the orchestrator phase ($phase), the running jobs ($jobs) and the panel name ($name). Pane state and notifications stay with Herdr's official Pi integration.",
 	"license": "MIT",
 	"author": "Pablo Miguez",
