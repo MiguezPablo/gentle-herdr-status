@@ -89,6 +89,7 @@ export const PALETTE = {
 	green: "#a6e3a1",
 	red: "#f38ba8",
 	overlay: "#7f849c",
+	overlay2: "#9399b2",
 	sky: "#89dceb",
 	neutral: "#cdd6f4",
 } as const;
@@ -130,7 +131,9 @@ export type SidebarRow = RowCell[];
  *
  * `roles` es el mapeo rol del tema → fase (S20): el primero que exista y valide manda, y
  * si ninguno lo hace se usa el hex de la paleta de esa misma fase. `toolTitle` cae a
- * `accent` porque es el rol que el tema define para los títulos de herramientas.
+ * `accent` porque es el rol que el tema define para los títulos de herramientas. El
+ * `working` de la fase ausente va último (S22), con el rol `muted` y su propio fallback
+ * `#9399b2`, porque comparte el significado del contador de jobs y no el del cierre.
  */
 const PHASE_COLORS: ReadonlyArray<{
 	contains: string;
@@ -145,6 +148,7 @@ const PHASE_COLORS: ReadonlyArray<{
 	{ contains: "implementing", roles: ["warning"], fallback: PALETTE.yellow },
 	{ contains: "checking", roles: ["success"], fallback: PALETTE.green },
 	{ contains: "closing", roles: ["dim"], fallback: PALETTE.overlay },
+	{ contains: "working", roles: ["muted"], fallback: PALETTE.overlay2 },
 ];
 
 /** Las reglas de fase, con los hex del tema activo que se le pasen o la paleta de siempre. */
@@ -258,6 +262,24 @@ function lineIndices(lines: readonly string[], value: string): number[] {
 	return found;
 }
 
+/** Dónde está el bloque propio: entero, ausente o roto (marcas incompletas o duplicadas). */
+type BlockSpan =
+	| { status: "found"; begin: number; end: number }
+	| { status: "absent" }
+	| { status: "broken" };
+
+/** Localiza el bloque `BEGIN … END` propio en las líneas ya separadas del archivo (S16, S21). */
+function findBlock(lines: readonly string[]): BlockSpan {
+	const begins = lineIndices(lines, BEGIN_MARK);
+	const ends = lineIndices(lines, END_MARK);
+	if (begins.length === 0 && ends.length === 0) return { status: "absent" };
+	if (begins.length !== 1 || ends.length !== 1) return { status: "broken" };
+	const [begin] = begins;
+	const [end] = ends;
+	if (end < begin) return { status: "broken" };
+	return { status: "found", begin, end };
+}
+
 /** Una línea es cabecera de tabla TOML cuando es `[...]` o `[[...]]` y no un comentario. */
 function isTableHeader(line: string): boolean {
 	const trimmed = line.trim();
@@ -284,18 +306,12 @@ function appendBlock(text: string, block: string): string {
  */
 export function planSync(text: string, block: string): PlanResult {
 	const lines = text.split("\n");
-	const begins = lineIndices(lines, BEGIN_MARK);
-	const ends = lineIndices(lines, END_MARK);
-	if (begins.length > 0 || ends.length > 0) {
-		if (begins.length !== 1 || ends.length !== 1) {
-			return denied(`the pi-herdr-status block in the Herdr config is incomplete or duplicated`);
-		}
-		const [begin] = begins;
-		const [end] = ends;
-		if (end < begin) {
-			return denied(`the pi-herdr-status block in the Herdr config is incomplete or duplicated`);
-		}
-		const next = [...lines.slice(0, begin), ...block.split("\n"), ...lines.slice(end + 1)];
+	const own = findBlock(lines);
+	if (own.status === "broken") {
+		return denied(`the pi-herdr-status block in the Herdr config is incomplete or duplicated`);
+	}
+	if (own.status === "found") {
+		const next = [...lines.slice(0, own.begin), ...block.split("\n"), ...lines.slice(own.end + 1)];
 		return { status: "replace", content: next.join("\n") };
 	}
 	const headers = lineIndices(lines, TABLE_HEADER);
@@ -531,4 +547,33 @@ export async function syncHerdrRows(options: SyncOptions): Promise<SyncResult> {
 		return { status: "error", path, reason: `herdr server reload-config failed${detail}` };
 	}
 	return { status: "ok", path };
+}
+
+/** Lo que la detección del auto-sync necesita del sync: la config, el entorno, el tema y el fs. */
+export type AutoSyncOptions = Pick<SyncOptions, "config" | "env" | "theme" | "fs">;
+
+/** true cuando el bloque propio ya está y su contenido difiere del que escribiría el sync. */
+function blockOutdated(text: string, block: string): boolean {
+	const lines = text.split("\n");
+	const own = findBlock(lines);
+	if (own.status !== "found") return false;
+	return lines.slice(own.begin, own.end + 1).join("\n") !== block;
+}
+
+/**
+ * ¿Corresponde el auto-sync de `session_start` (S21)? Sólo cuando el bloque propio ya está en
+ * el config de Herdr y difiere del `managedBlock` que produciría la config en efecto (con los
+ * hex del tema cuando `colors` está encendido, igual que la acción del panel). Sin archivo,
+ * sin bloque propio (nunca sincronizado, tabla legada de T18 o tabla ajena) o con el bloque
+ * idéntico no hay nada que hacer: el auto-sync nunca crea ni migra el bloque. Nunca tira.
+ */
+export function needsAutoSync(options: AutoSyncOptions): boolean {
+	try {
+		const fs = options.fs ?? nodeHerdrFs;
+		const current = fs.readFile(herdrConfigPath(options.env));
+		if (current === undefined) return false;
+		return blockOutdated(current, managedBlock(options.config, options.theme));
+	} catch {
+		return false;
+	}
 }

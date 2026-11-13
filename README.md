@@ -253,6 +253,17 @@ What it does, in order:
 The result is reported in the panel: synced (info), refused (warning) or failed (error).
 The JSON config is saved before the sync, so the block always matches what the panel shows.
 
+On session start (TUI only) the extension re-syncs on its own, so the row follows the
+package and the theme without asking. When its own block is already there and differs from
+the block the effective config would write — after updating the package or changing the
+theme, say — it runs the same sync (backup, temporary file, `herdr config check`, reload)
+and reports `Herdr status: Herdr rows re-synced in <path> (the block was outdated)`; a
+refusal is a warning and a failure an error, with the same text as the manual action. It
+never creates the block and never migrates the old hand-written table or anyone else's:
+with no block of its own, an identical block, or a missing or unreadable `config.toml`, it
+writes nothing, runs no `herdr` command and says nothing. The check is asynchronous, so the
+tokens of `session_start` are published first, and it runs at most once per session start.
+
 With `colors: false` (the default) every cell is a plain token string, which is the block
 above. With `colors: true` the cells become Herdr style tables (`{ token = "…", fg = "…",
 rules = […] }`), which is where colors live: `fg` takes a strict hex color and `rules`
@@ -261,7 +272,7 @@ compare the reported value, first match wins.
 | Token | Color |
 | --- | --- |
 | `$name` | none: the panel name keeps the terminal's default color. |
-| `$phase` | one rule per phase, with `contains` and `ignore_case` so both styles match: exploring/researching the `toolTitle` role of the theme, planning/deciding/authorizing `accent`, implementing `warning`, checking `success`, closing `dim`. |
+| `$phase` | one rule per phase, with `contains` and `ignore_case` so both styles match: exploring/researching the `toolTitle` role of the theme, planning/deciding/authorizing `accent`, implementing `warning`, checking `success`, closing `dim`, and `working` — the phase shown while the agent works without an ODD phase — the `muted` role, as the last rule. |
 | `$changes_added` | the `success` role: the `+N` half in green, the same color Gentle Shell gives it. |
 | `$changes_deleted` | the `error` role: the `-N` half in red, the same color Gentle Shell gives it. |
 | `$subagent` | the `accent` role. |
@@ -281,11 +292,12 @@ validate, leaves that cell on the fallback of the built-in Catppuccin Mocha pale
 `#89b4fa` for exploring/researching — and for the same group when the theme has no
 `toolTitle`, which falls back to `accent` —, mauve `#cba6f7` for
 planning/deciding/authorizing, yellow `#f9e2af` for implementing, green `#a6e3a1` for
-checking and `$changes_added`, overlay `#7f849c` for closing and `$jobs`, sky `#89dceb` for
-`$subagent` and red `#f38ba8` for `$changes_deleted`). A theme that cannot be read at all
-leaves the whole row on that palette, so the sync never fails over a theme. The block is a
-copy, not a live link: **run Sync Herdr rows again if you change the theme**. Colors are off
-by default, like everything else.
+checking and `$changes_added`, overlay `#7f849c` for closing and `$jobs`, muted `#9399b2` for
+`working`, sky `#89dceb` for `$subagent` and red `#f38ba8` for `$changes_deleted`). A theme
+that cannot be read at all leaves the whole row on that palette, so the sync never fails over
+a theme. The block is a copy, not a live link: after a theme change the next session start
+re-syncs it automatically, and **Sync Herdr rows** applies it right away without restarting
+Pi. Colors are off by default, like everything else.
 
 To undo it by hand: delete the block from `# BEGIN pi-herdr-status …` through
 `# END pi-herdr-status` (or restore `<config>.pi-herdr-status.bak`) and run

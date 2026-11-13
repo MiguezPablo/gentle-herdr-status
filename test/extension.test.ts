@@ -7,7 +7,7 @@ import { after, test } from "node:test";
 import { createExtension } from "../extensions/pi-herdr-status.ts";
 import { CONFIG_ENV, DEFAULT_CONFIG, OPTION_IDS, saveConfig } from "../src/config.ts";
 import { DEBUG_ENV } from "../src/debug.ts";
-import { BACKUP_SUFFIX, HERDR_CONFIG_ENV, type HerdrRun } from "../src/herdr-config.ts";
+import { BACKUP_SUFFIX, HERDR_CONFIG_ENV, managedBlock, type HerdrRun } from "../src/herdr-config.ts";
 import { JOBS_SIDEBAR_EVENT } from "../src/jobs.ts";
 import {
 	CHANGES_ADDED_TOKEN,
@@ -72,11 +72,17 @@ type CommandOptions = { description?: string; handler: CommandHandler };
 
 function load(
 	env: Record<string, string | undefined> = HERDR_ENV,
-	deps: { readPhase?: PhaseReader; runGit?: GitRun; configPath?: string; herdrRun?: HerdrRun } = {},
+	deps: { readPhase?: PhaseReader; runGit?: GitRun; configPath?: string; herdrRun?: HerdrRun; herdrConfigPath?: string } = {},
 ) {
 	const configPath = deps.configPath ?? freshConfigPath();
+	// Sin ruta explícita el auto-sync leería el config real de Herdr: nunca en tests.
+	const herdrConfigPath = deps.herdrConfigPath ?? freshHerdrPath(`auto-${++configSeq}`);
 	// Sin ruta explícita el test escribiría en el archivo real del usuario.
-	const effectiveEnv: Record<string, string | undefined> = { [CONFIG_ENV]: configPath, ...env };
+	const effectiveEnv: Record<string, string | undefined> = {
+		[CONFIG_ENV]: configPath,
+		[HERDR_CONFIG_ENV]: herdrConfigPath,
+		...env,
+	};
 	const handlers = new Map<string, Handler>();
 	const bus = new Map<string, (data: unknown) => void>();
 	const commands = new Map<string, CommandOptions>();
@@ -1312,4 +1318,111 @@ test("S16: without a Herdr config the sync reports an error and creates nothing"
 	const notice = ui.notifications.at(-1);
 	assert.equal(notice?.level, "error");
 	assert.match(notice?.message ?? "", /Herdr/u);
+});
+
+/** Contexto de sesión con la UI que el auto-sync usa: avisos y tema activo (S21). */
+function sessionUi(theme?: unknown): { ctx: unknown; notifications: Notification[] } {
+	const notifications: Notification[] = [];
+	return {
+		notifications,
+		ctx: {
+			mode: "tui",
+			ui: {
+				theme,
+				notify: (message: string, level?: string) => { notifications.push({ message, level }); },
+			},
+			sessionManager: { getSessionId: () => "s1" },
+		},
+	};
+}
+
+/** Un bloque propio viejo: el que escribiría la config con colores y contador encendidos. */
+const OUTDATED_BLOCK = managedBlock({ ...DEFAULT_CONFIG, changes: true, colors: true });
+
+test("S21: session start re-syncs an outdated block, reloads Herdr and reports the exact text", async () => {
+	const path = freshHerdrPath("auto-outdated", `[ui.sound]\nenabled = true\n\n${OUTDATED_BLOCK}\n`);
+	const herdr = fakeHerdrRun();
+	const { fire, sent } = load({ ...HERDR_ENV, [HERDR_CONFIG_ENV]: path }, { herdrRun: herdr.run });
+	const ui = sessionUi();
+	await fire("session_start", { reason: "startup" }, ui.ctx);
+	assert.equal(
+		readFileSync(path, "utf8"),
+		`[ui.sound]\nenabled = true\n\n${managedBlock(DEFAULT_CONFIG)}\n`,
+		"the block follows the effective config and the rest of the file is kept",
+	);
+	assert.deepEqual(herdr.calls.map((call) => [call.file, ...call.args]), [
+		["herdr", "config", "check"],
+		["herdr", "server", "reload-config"],
+	], "check first, reload after it");
+	assert.deepEqual(ui.notifications, [
+		{ message: `Herdr status: Herdr rows re-synced in ${path} (the block was outdated)`, level: "info" },
+	]);
+	assert.ok(sent.length > 0, "the tokens were published, the auto-sync did not delay them");
+});
+
+test("S21: the auto-sync writes the fg colors of the active theme when colors are on", async () => {
+	const configPath = freshConfigPath();
+	saveConfig(configPath, { ...DEFAULT_CONFIG, colors: true });
+	const colored = managedBlock({ ...DEFAULT_CONFIG, colors: true });
+	const path = freshHerdrPath("auto-theme", `[ui.sound]\nenabled = true\n\n${colored}\n`);
+	const herdr = fakeHerdrRun();
+	const { fire } = load({ ...HERDR_ENV, [HERDR_CONFIG_ENV]: path }, { configPath, herdrRun: herdr.run });
+	const ui = sessionUi(fakeTheme());
+	await fire("session_start", { reason: "startup" }, ui.ctx);
+	const written = readFileSync(path, "utf8");
+	assert.match(written, /contains = "exploring", ignore_case = true, fg = "#222222"/u, "the theme is the one of this session");
+	assert.match(written, /token = "\$subagent", fg = "#333333"/u);
+	assert.match(written, /token = "\$jobs", fg = "#777777"/u);
+	assert.equal(ui.notifications.length, 1, "and the sync is reported once");
+});
+
+test("S21: an identical block means no write, no herdr call and no notice", async () => {
+	const content = `[ui.sound]\nenabled = true\n\n${managedBlock(DEFAULT_CONFIG)}\n`;
+	const path = freshHerdrPath("auto-identical", content);
+	const herdr = fakeHerdrRun();
+	const { fire } = load({ ...HERDR_ENV, [HERDR_CONFIG_ENV]: path }, { herdrRun: herdr.run });
+	const ui = sessionUi();
+	await fire("session_start", { reason: "startup" }, ui.ctx);
+	assert.equal(readFileSync(path, "utf8"), content, "byte for byte");
+	assert.deepEqual(herdr.calls, [], "herdr is never invoked");
+	assert.deepEqual(ui.notifications, [], "and there is nothing to say");
+	assert.equal(existsSync(`${path}${BACKUP_SUFFIX}`), false, "no backup either");
+});
+
+test("S21: without its own block the auto-sync never creates nor migrates it", async () => {
+	const foreign = "[ui.sound]\nenabled = true\n\n[ui.sidebar.agents.rows_by_agent]\nclaude = [[\"state_icon\"]]\n";
+	const path = freshHerdrPath("auto-foreign", foreign);
+	const herdr = fakeHerdrRun();
+	const { fire } = load({ ...HERDR_ENV, [HERDR_CONFIG_ENV]: path }, { herdrRun: herdr.run });
+	const ui = sessionUi();
+	await fire("session_start", { reason: "startup" }, ui.ctx);
+	assert.equal(readFileSync(path, "utf8"), foreign, "byte for byte");
+	assert.deepEqual(herdr.calls, []);
+	assert.deepEqual(ui.notifications, []);
+});
+
+test("S21: a non-TUI session never auto-syncs", async () => {
+	const path = freshHerdrPath("auto-rpc", `[ui.sound]\nenabled = true\n\n${OUTDATED_BLOCK}\n`);
+	const original = readFileSync(path, "utf8");
+	const herdr = fakeHerdrRun();
+	const { fire } = load({ ...HERDR_ENV, [HERDR_CONFIG_ENV]: path }, { herdrRun: herdr.run });
+	const ui = sessionUi();
+	await fire("session_start", { reason: "startup" }, { ...(ui.ctx as object), mode: "rpc" });
+	assert.equal(readFileSync(path, "utf8"), original, "the file is untouched");
+	assert.deepEqual(herdr.calls, []);
+	assert.deepEqual(ui.notifications, []);
+});
+
+test("S21: a failed check restores the block and reports the error text of the manual action", async () => {
+	const original = `[ui.sound]\nenabled = true\n\n${OUTDATED_BLOCK}\n`;
+	const path = freshHerdrPath("auto-error", original);
+	const herdr = fakeHerdrRun({ check: false });
+	const { fire } = load({ ...HERDR_ENV, [HERDR_CONFIG_ENV]: path }, { herdrRun: herdr.run });
+	const ui = sessionUi();
+	await fire("session_start", { reason: "startup" }, ui.ctx);
+	assert.equal(readFileSync(path, "utf8"), original, "the previous block comes back");
+	assert.deepEqual(herdr.calls.map((call) => call.args.join(" ")), ["config check"], "no reload after a failure");
+	const [notice] = ui.notifications;
+	assert.equal(notice?.level, "error");
+	assert.match(notice?.message ?? "", /^Herdr status: could not sync Herdr rows \(herdr config check failed/u);
 });

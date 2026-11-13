@@ -59,7 +59,16 @@ import {
 	type OptionRow,
 } from "../src/config.ts";
 import { createDebug, type DebugWriter } from "../src/debug.ts";
-import { syncHerdrRows, type HerdrFs, type HerdrRun, type ThemeHexes, type ThemeRole } from "../src/herdr-config.ts";
+import {
+	needsAutoSync,
+	syncHerdrRows,
+	type HerdrFs,
+	type HerdrRun,
+	type SyncOptions,
+	type SyncResult,
+	type ThemeHexes,
+	type ThemeRole,
+} from "../src/herdr-config.ts";
 import {
 	CHANGES_ADDED_TOKEN,
 	CHANGES_DELETED_TOKEN,
@@ -102,6 +111,7 @@ export type ExtensionDeps = {
 type Ctx = {
 	mode?: string;
 	cwd?: unknown;
+	ui?: unknown;
 	sessionManager?: { getSessionId?: () => string };
 } | undefined;
 type ToolEvent = { toolCallId?: unknown; toolName?: unknown; input?: unknown; details?: unknown };
@@ -326,6 +336,23 @@ function reason(error: unknown): string {
 	return error instanceof Error ? error.message : String(error);
 }
 
+type NotifyLevel = "info" | "warning" | "error";
+type Notify = (message: string, level: NotifyLevel) => void;
+
+/**
+ * El aviso de un sync, compartido por la acción del panel y el auto-sync de `session_start`
+ * (S21): el auto-sync sólo cambia el texto del caso `ok`, para decir que el bloque estaba viejo.
+ */
+function notifySync(notify: Notify, result: SyncResult, synced: string): void {
+	if (result.status === "ok") {
+		notify(synced, "info");
+	} else if (result.status === "denied") {
+		notify(`Herdr status: Herdr rows not synced, ${result.reason}`, "warning");
+	} else {
+		notify(`Herdr status: could not sync Herdr rows (${result.reason})`, "error");
+	}
+}
+
 /**
  * Los hex del tema activo de Pi/Gentle Shell, ya resueltos por rol (S20). Sin tema, sin
  * `colors` o con un tema que lanza, devuelve undefined y la fila vuelve a la paleta fija:
@@ -470,6 +497,39 @@ export function createExtension(deps: ExtensionDeps = {}) {
 			syncChanges();
 		};
 
+		/**
+		 * Opciones del sync: las mismas que usa la acción del panel, con el tema activo sólo
+		 * cuando `colors` está encendido (S16, S20).
+		 */
+		const syncOptions = (ui: unknown): SyncOptions => ({
+			config: settings,
+			env,
+			theme: settings.colors ? themeHexes(ui) : undefined,
+			fs: deps.herdrFs,
+			run: deps.herdrRun,
+		});
+
+		/**
+		 * S21: si el bloque propio del config de Herdr quedó desactualizado, se re-sincroniza solo
+		 * al abrir la sesión. Nunca crea ni migra el bloque, nunca tira y `session_start` no lo
+		 * espera, así que los tokens ya publicados no se demoran.
+		 */
+		const autoSync = async (context: Ctx): Promise<void> => {
+			try {
+				const options = syncOptions(context?.ui);
+				if (!needsAutoSync(options)) return;
+				const sync = await syncHerdrRows(options);
+				const ui = context?.ui as { notify?: Notify } | undefined;
+				notifySync(
+					(message, level) => ui?.notify?.(message, level),
+					sync,
+					`Herdr status: Herdr rows re-synced in ${sync.path} (the block was outdated)`,
+				);
+			} catch {
+				// Un auto-sync nunca puede romper `session_start`.
+			}
+		};
+
 		const openPanel = async (ctx: ExtensionCommandContext): Promise<void> => {
 			// Se relee el archivo al abrir: pudo cambiar desde `session_start`.
 			const stored = loadConfig(path);
@@ -510,21 +570,12 @@ export function createExtension(deps: ExtensionDeps = {}) {
 			}
 			// Sync: la fila de Herdr se arma con la config en efecto recién guardada; los colores
 			// salen del tema activo de Pi/Gentle Shell, con la paleta fija como fallback (S20).
-			const sync = await syncHerdrRows({
-				config: settings,
-				env,
-				// Con los colores apagados el tema ni se lee: la fila es la de siempre.
-				theme: settings.colors ? themeHexes(ctx.ui) : undefined,
-				fs: deps.herdrFs,
-				run: deps.herdrRun,
-			});
-			if (sync.status === "ok") {
-				ctx.ui.notify(`Herdr status: Herdr rows synced in ${sync.path}`, "info");
-			} else if (sync.status === "denied") {
-				ctx.ui.notify(`Herdr status: Herdr rows not synced, ${sync.reason}`, "warning");
-			} else {
-				ctx.ui.notify(`Herdr status: could not sync Herdr rows (${sync.reason})`, "error");
-			}
+			const sync = await syncHerdrRows(syncOptions(ctx.ui));
+			notifySync(
+				(message, level) => ctx.ui.notify(message, level),
+				sync,
+				`Herdr status: Herdr rows synced in ${sync.path}`,
+			);
 		};
 
 		pi.registerCommand("herdr-status", {
@@ -597,6 +648,8 @@ export function createExtension(deps: ExtensionDeps = {}) {
 			}
 			publish("session_start", { ctxSessionId: seen });
 			refreshChanges(context);
+			// S21: el bloque de Herdr se re-sincroniza solo si quedó viejo; no demora estos tokens.
+			void autoSync(context);
 		});
 
 		pi.on("agent_start", (_event, ctx) => {

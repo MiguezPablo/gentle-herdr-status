@@ -25,7 +25,9 @@ import {
 	herdrBin,
 	herdrConfigPath,
 	managedBlock,
+	needsAutoSync,
 	nodeHerdrFs,
+	phaseRules,
 	planSync,
 	renderRows,
 	sidebarRows,
@@ -190,6 +192,7 @@ test("S16: the phase rules cover every ODD phase, case-insensitively, with the M
 		["implementing", PALETTE.yellow],
 		["checking", PALETTE.green],
 		["closing", PALETTE.overlay],
+		["working", PALETTE.overlay2],
 	]);
 	assert.ok(phase.rules.every((rule) => rule.ignore_case === true), "contains matches either phase style");
 	assert.ok(phase.rules.length <= 16, "Herdr accepts at most 16 rules per token");
@@ -203,6 +206,7 @@ test("S16: the palette is the Catppuccin Mocha hex set the docs accept", () => {
 		green: "#a6e3a1",
 		red: "#f38ba8",
 		overlay: "#7f849c",
+		overlay2: "#9399b2",
 		sky: "#89dceb",
 		neutral: "#cdd6f4",
 	});
@@ -211,7 +215,7 @@ test("S16: the palette is the Catppuccin Mocha hex set the docs accept", () => {
 test("S16: the colored rows render as valid Herdr inline tables with rules", () => {
 	assert.equal(
 		renderRows(sidebarRows(withColors())),
-		'[["state_icon", "machine", "workspace", "tab"], ["$name", { token = "$phase", rules = [{ contains = "exploring", ignore_case = true, fg = "#89b4fa" }, { contains = "researching", ignore_case = true, fg = "#89b4fa" }, { contains = "planning", ignore_case = true, fg = "#cba6f7" }, { contains = "deciding", ignore_case = true, fg = "#cba6f7" }, { contains = "authorizing", ignore_case = true, fg = "#cba6f7" }, { contains = "implementing", ignore_case = true, fg = "#f9e2af" }, { contains = "checking", ignore_case = true, fg = "#a6e3a1" }, { contains = "closing", ignore_case = true, fg = "#7f849c" }] }], [{ token = "$subagent", fg = "#89dceb" }], [{ token = "$jobs", fg = "#7f849c" }]]',
+		'[["state_icon", "machine", "workspace", "tab"], ["$name", { token = "$phase", rules = [{ contains = "exploring", ignore_case = true, fg = "#89b4fa" }, { contains = "researching", ignore_case = true, fg = "#89b4fa" }, { contains = "planning", ignore_case = true, fg = "#cba6f7" }, { contains = "deciding", ignore_case = true, fg = "#cba6f7" }, { contains = "authorizing", ignore_case = true, fg = "#cba6f7" }, { contains = "implementing", ignore_case = true, fg = "#f9e2af" }, { contains = "checking", ignore_case = true, fg = "#a6e3a1" }, { contains = "closing", ignore_case = true, fg = "#7f849c" }, { contains = "working", ignore_case = true, fg = "#9399b2" }] }], [{ token = "$subagent", fg = "#89dceb" }], [{ token = "$jobs", fg = "#7f849c" }]]',
 	);
 });
 
@@ -241,6 +245,7 @@ test("S20: with theme hexes every colored cell takes the hex of its role", () =>
 		["implementing", THEME_HEXES.warning],
 		["checking", THEME_HEXES.success],
 		["closing", THEME_HEXES.dim],
+		["working", THEME_HEXES.muted],
 	]);
 	assert.deepEqual(styled(rows, "$changes_added"), { token: "$changes_added", fg: THEME_HEXES.success });
 	assert.deepEqual(styled(rows, "$changes_deleted"), { token: "$changes_deleted", fg: THEME_HEXES.error });
@@ -259,6 +264,7 @@ test("S20: a missing role falls back per cell, and exploring falls back from too
 		PALETTE.yellow,
 		PALETTE.green,
 		PALETTE.overlay,
+		PALETTE.overlay2,
 	], "without toolTitle the exploring group uses accent; the rest keeps the palette");
 	assert.deepEqual(
 		styled(withAccent, "$changes_added"),
@@ -286,7 +292,8 @@ test("S20: a missing role falls back per cell, and exploring falls back from too
 		PALETTE.yellow,
 		PALETTE.green,
 		PALETTE.overlay,
-	], "without toolTitle nor accent the palette of each phase is used");
+		"#777777",
+	], "without toolTitle nor accent the palette of each phase is used, and working keeps its muted role");
 });
 
 test("S20: a hex that is not #RRGGBB falls back to the palette of that cell", () => {
@@ -324,6 +331,7 @@ test("S20: a hex that is not #RRGGBB falls back to the palette of that cell", ()
 		PALETTE.yellow,
 		PALETTE.green,
 		PALETTE.overlay,
+		PALETTE.overlay2,
 	], "an invalid toolTitle falls back to accent, and invalid phase roles to their palette hex");
 });
 
@@ -508,6 +516,38 @@ pi = [["state_icon"]]
 	assert.equal(plan.status, "denied");
 	if (plan.status !== "denied") return;
 	assert.ok(plan.reason.length > 0);
+});
+
+test("S22: working closes the phase rules with the muted role and its own fallback", () => {
+	assert.equal(PALETTE.overlay2, "#9399b2", "the working fallback is the muted hex of the theme");
+	assert.notEqual(PALETTE.overlay2, PALETTE.overlay, "working does not share the closing color");
+	assert.equal(PALETTE.overlay, "#7f849c", "the closing and $jobs fallback do not change");
+	const rules = phaseRules();
+	assert.deepEqual(rules.at(-1), { contains: "working", ignore_case: true, fg: PALETTE.overlay2 }, "the new rule is the last one");
+	assert.deepEqual(
+		rules.slice(0, -1).map((rule) => [rule.contains, rule.fg]),
+		[
+			["exploring", PALETTE.blue],
+			["researching", PALETTE.blue],
+			["planning", PALETTE.mauve],
+			["deciding", PALETTE.mauve],
+			["authorizing", PALETTE.mauve],
+			["implementing", PALETTE.yellow],
+			["checking", PALETTE.green],
+			["closing", PALETTE.overlay],
+		],
+		"the existing rules keep their order and colors",
+	);
+	assert.deepEqual(
+		phaseRules({ muted: "#777777" }).at(-1),
+		{ contains: "working", ignore_case: true, fg: "#777777" },
+		"with a theme, working takes the muted role",
+	);
+	assert.equal(
+		renderRows(sidebarRows(DEFAULT_CONFIG)),
+		'[["state_icon", "machine", "workspace", "tab"], ["$name", "$phase"], ["$subagent"], ["$jobs"]]',
+		"with colors off nothing changes",
+	);
 });
 
 test("S16: a missing Herdr config is an error and is never created", async () => {
@@ -750,4 +790,74 @@ test("S16 R3: a failed check does not restore over an edit made during the check
 		assert.equal(readFileSync(path, "utf8"), concurrent, "the concurrent edit is left alone");
 		assert.equal(readFileSync(backup, "utf8"), original, "the backup keeps the original");
 	});
+});
+
+test("S21: an existing block that differs from the config in effect is due for an auto-sync", async () => {
+	await withTempDir(async (dir) => {
+		const path = join(dir, "config.toml");
+		// El bloque que quedó de otra versión: con colores y contador, que la config en efecto no pide.
+		writeFileSync(path, `[ui.sound]\nenabled = true\n\n${managedBlock(withColors({ changes: true }))}\n`);
+		assert.equal(
+			needsAutoSync({ config: DEFAULT_CONFIG, env: { [HERDR_CONFIG_ENV]: path } }),
+			true,
+			"the own block is there and its content is old",
+		);
+	});
+});
+
+test("S21: an identical block is not due, and a theme change makes a colored block outdated", async () => {
+	await withTempDir(async (dir) => {
+		const path = join(dir, "config.toml");
+		const env = { [HERDR_CONFIG_ENV]: path };
+		writeFileSync(path, `[ui.sound]\nenabled = true\n\n${managedBlock(DEFAULT_CONFIG)}\n`);
+		assert.equal(needsAutoSync({ config: DEFAULT_CONFIG, env }), false, "the block already matches");
+		writeFileSync(path, managedBlock(withColors(), THEME_HEXES));
+		assert.equal(
+			needsAutoSync({ config: withColors(), env, theme: THEME_HEXES }),
+			false,
+			"the same theme means the same block",
+		);
+		assert.equal(
+			needsAutoSync({ config: withColors(), env, theme: { accent: "#111111" } }),
+			true,
+			"another theme leaves the block outdated",
+		);
+	});
+});
+
+test("S21: without its own block nothing is due: never synced, legacy table, foreign table, broken or missing", async () => {
+	await withTempDir(async (dir) => {
+		const path = join(dir, "config.toml");
+		const env = { [HERDR_CONFIG_ENV]: path };
+		writeFileSync(path, "[ui.sound]\nenabled = true\n");
+		assert.equal(needsAutoSync({ config: DEFAULT_CONFIG, env }), false, "no block: the auto-sync never creates it");
+		writeFileSync(path, LEGACY);
+		assert.equal(needsAutoSync({ config: DEFAULT_CONFIG, env }), false, "the hand-written table of T18 is never migrated");
+		writeFileSync(path, `[ui.sidebar.agents.rows_by_agent]\nclaude = [["state_icon"]]\n`);
+		assert.equal(needsAutoSync({ config: DEFAULT_CONFIG, env }), false, "a foreign table is left alone");
+		writeFileSync(path, `[ui.sound]\nenabled = true\n${BEGIN_MARK}\n[ui.sidebar.agents.rows_by_agent]\npi = []\n`);
+		assert.equal(needsAutoSync({ config: DEFAULT_CONFIG, env }), false, "an incomplete block is not guessed");
+	});
+	await withTempDir(async (dir) => {
+		const path = join(dir, "herdr", "config.toml");
+		assert.equal(
+			needsAutoSync({ config: DEFAULT_CONFIG, env: { [HERDR_CONFIG_ENV]: path } }),
+			false,
+			"a missing file is silence",
+		);
+		assert.equal(existsSync(path), false, "and nothing is created");
+	});
+});
+
+test("S21: an unreadable config is not due and the helper never throws", () => {
+	const fs: HerdrFs = {
+		...nodeHerdrFs,
+		readFile() {
+			throw new Error("EACCES");
+		},
+	};
+	assert.equal(
+		needsAutoSync({ config: DEFAULT_CONFIG, env: { [HERDR_CONFIG_ENV]: "/nope/config.toml" }, fs }),
+		false,
+	);
 });
